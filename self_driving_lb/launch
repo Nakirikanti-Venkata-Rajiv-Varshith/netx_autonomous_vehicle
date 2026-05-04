@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]; then
+    echo "Pass either 'onboard' or ' cloud'"
+    exit 1
+fi
+
+
+cd /home/hiwonder/ros_ws/src/hiwonder_example/scripts/yolov5_detect/
+
+if [ "$1" = "onboard" ]; then
+    echo "Launching onboard..."
+
+#  ln -s yolov5_trt_onboard.py yolov5_trt.py
+elif [ "$1" = "cloud" ]; then
+    echo "Launching cloud..."
+    rm yolov5_trt.py
+    ln -s yolov5_trt_cloud.py yolov5_trt.py
+fi
+
+roslaunch hiwonder_example self_driving.launch

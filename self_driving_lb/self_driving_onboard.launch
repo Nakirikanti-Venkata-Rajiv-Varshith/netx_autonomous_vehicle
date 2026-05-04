@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="only_line_follow"    default="false"/>
+    <include file="$(find hiwonder_peripherals)/launch/depth_cam.launch"/>
+    <include file="$(find hiwonder_servo_controllers)/launch/start.launch"/>
+    <include file="$(find hiwonder_controller)/launch/hiwonder_controller.launch"/>
+
+
+    <arg name="node_name" default="yolov5" />
+    <rosparam param="/$(arg node_name)/classes">['go', 'right', 'park', 'red', 'green', 'crosswalk']</rosparam>
+    <node unless="$(arg only_line_follow)" pkg="hiwonder_example" type="yolov5_node.py" name="$(arg node_name)" output="screen">
+        <param name="use_depth_cam" value="true"/>
+        <param name="engine"        value="traffic_signs_640s_7_0.engine"/>
+        <param name="lib"           value="libmyplugins_640.so"/>
+        <param name="conf_thresh"   value="0.3"/>
+        <param name="image_path"   value="/home/hiwonder/ros_ws/src/hiwonder_example/scripts/self_driving/right-side.png"/>
+    </node>
+
+    <node pkg="hiwonder_example" type="trail.py" name="self_driving_lb" output="screen">
+        <param name="only_line_follow"    value="$(arg only_line_follow)"/>
+    </node>
+</launch>
