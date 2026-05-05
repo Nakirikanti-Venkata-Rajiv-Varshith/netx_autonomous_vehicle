@@ -226,7 +226,11 @@ class LaneNode:
             'lane': {
                 'angle': lane_angle,
                 'x': lane_x
-            }
+            },
+            'source': 'onboard',
+            'timestamp': round(rospy.Time.now().to_sec(), 4),
+            'quality': round(float(np.count_nonzero(binary_image)) / float(binary_image.size), 4),
+            'fresh_inference': True
         }
 
         # Debug visualization (optional)
@@ -255,12 +259,8 @@ class LaneNode:
         # Handle different encodings
         if encoding == 'rgb8':
             if len(cv_image.shape) == 3 and cv_image.shape[2] == 3:
-                # If image is BGR (from OpenCV), convert to RGB
                 if cv_image.dtype == np.uint8:
-                    # Check if it's already RGB or needs conversion
-                    # OpenCV usually uses BGR, so convert if needed
-                    rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-                    ros_image.data = rgb_image.tobytes()
+                    ros_image.data = cv_image.tobytes()
                     ros_image.step = ros_image.width * 3
                 else:
                     rospy.logwarn("Unsupported image dtype for rgb8 encoding")

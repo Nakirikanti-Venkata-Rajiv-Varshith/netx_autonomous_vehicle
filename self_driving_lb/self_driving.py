@@ -62,6 +62,11 @@ class SelfDrivingNodeLB:
         self.normal_speed = 0.15
         self.slow_down_speed = 0.1
         self.traffic_signs_status = None
+        self.lane_results_timestamp = 0.0
+        self.object_results_timestamp = 0.0
+        self.traffic_results_timestamp = 0.0
+        self.fresh_lane_timeout = 0.4
+        self.fresh_detection_timeout = 0.4
 
         # Object detection
         self.target_class = "keyboard"
@@ -107,6 +112,9 @@ class SelfDrivingNodeLB:
         rospy.Subscriber('/load_balancer/yolov5/traffic_detect', ObjectsInfo, self.get_object_callback)
         rospy.Subscriber('/load_balancer/yolov5/object_detect', ObjectsInfo, self.get_od_callback)
         rospy.Subscriber('/lane_detection/result', String, self.lane_result_callback)
+        rospy.Subscriber('/load_balancer/lane_detection', String, self.lb_lane_result_callback)
+        rospy.Subscriber('/load_balancer/object_detections', String, self.lb_object_result_callback)
+        rospy.Subscriber('/load_balancer/traffic_sign_detections', String, self.lb_traffic_result_callback)
         
         # FIXED: Add buff_size to these image subscribers
         rospy.Subscriber(
@@ -157,8 +165,9 @@ class SelfDrivingNodeLB:
             rospy.sleep(0.01)
 
     def bandwidth_callback(self, msg):
-        self.upload_speed = msg.data[0]
-        self.download_speed = msg.data[1]
+        if len(msg.data) >= 2:
+            self.upload_speed = msg.data[0]
+            self.download_speed = msg.data[1]
 
     def startup_latency_callback(self, msg):
         self.startup_latency = msg.data
@@ -205,27 +214,40 @@ class SelfDrivingNodeLB:
 
     def lane_result_callback(self, msg):
         try:
-            self.lane_results = json.loads(msg.data)
-            if self.lane_results:
-                self.lane_data = {
-                    'horizontal_y': self.lane_results.get('horizontal_y', 0),
-                    'vertical_near': {
-                        'up': tuple(self.lane_results.get('vertical_near', {}).get('up', [0,0])),
-                        'down': tuple(self.lane_results.get('vertical_near', {}).get('down', [0,0])),
-                        'center_y': self.lane_results.get('vertical_near', {}).get('center_y', 0)
-                    },
-                    'vertical_far': {
-                        'up': tuple(self.lane_results.get('vertical_far', {}).get('up', [0,0])),
-                        'down': tuple(self.lane_results.get('vertical_far', {}).get('down', [0,0]))
-                    },
-                    'lane': {
-                        'x': self.lane_results.get('lane', {}).get('x', -1),
-                        'angle': self.lane_results.get('lane', {}).get('angle', 0)
-                    }
-                }
-                logging.info(f"[Lane] Lane data updated. frame_id={getattr(self, 'frame_id', 'NA')}")
+            self.update_lane_data(json.loads(msg.data))
         except Exception as e:
             rospy.logerr(f"Lane result parse error: {e}")
+
+    def lb_lane_result_callback(self, msg):
+        try:
+            self.update_lane_data(json.loads(msg.data))
+        except Exception as e:
+            rospy.logerr(f"Load balancer lane parse error: {e}")
+
+    def update_lane_data(self, lane_payload):
+        if lane_payload:
+            self.lane_results = lane_payload
+            self.lane_data = {
+                'horizontal_y': self.lane_results.get('horizontal_y', 0),
+                'vertical_near': {
+                    'up': tuple(self.lane_results.get('vertical_near', {}).get('up', [0,0])),
+                    'down': tuple(self.lane_results.get('vertical_near', {}).get('down', [0,0])),
+                    'center_y': self.lane_results.get('vertical_near', {}).get('center_y', 0)
+                },
+                'vertical_far': {
+                    'up': tuple(self.lane_results.get('vertical_far', {}).get('up', [0,0])),
+                    'down': tuple(self.lane_results.get('vertical_far', {}).get('down', [0,0]))
+                },
+                'lane': {
+                    'x': self.lane_results.get('lane', {}).get('x', -1),
+                    'angle': self.lane_results.get('lane', {}).get('angle', 0)
+                }
+            }
+            self.lane_results_timestamp = float(self.lane_results.get('timestamp', time.time()))
+            logging.info(
+                f"[Lane] Lane data updated. source={self.lane_results.get('source', 'unknown')}, "
+                f"frame_id={getattr(self, 'frame_id', 'NA')}"
+            )
 
     def lane_image_callback(self, msg):
         """Callback for processed lane image - USING MANUAL CONVERSION"""
@@ -360,7 +382,8 @@ class SelfDrivingNodeLB:
 
             # Object stop check
             distance = self.object_distance
-            if distance is not None and distance <= 0.5:
+            object_fresh = (time.time() - self.object_results_timestamp) <= self.fresh_detection_timeout
+            if distance is not None and object_fresh and distance <= 0.5:
                 self.stop = True
                 actuation = time.time()
                 self.delay = actuation - frame_start
@@ -372,12 +395,18 @@ class SelfDrivingNodeLB:
             # Lane following and movement control logic (simplified for brevity)
             lane_x = self.lane_data['lane']['x']
             lane_angle = self.lane_data['lane']['angle']
+            lane_fresh = (time.time() - self.lane_results_timestamp) <= self.fresh_lane_timeout
             twist = geo_msg.Twist()
-            if lane_x >=0 and not self.stop:
+            if lane_x >=0 and lane_fresh and not self.stop:
                 self.pid.SetPoint = 90
                 self.pid.update(lane_x)
                 twist.linear.x = self.normal_speed
                 twist.angular.z = twist.linear.x*math.tan(misc.set_range(self.pid.output,-0.1,0.1))/0.213
+                self.send_servo_command(twist.angular.z)
+                self.mecanum_pub.publish(twist)
+            elif lane_x >= 0 and not self.stop:
+                twist.linear.x = self.slow_down_speed
+                twist.angular.z = 0.0
                 self.send_servo_command(twist.angular.z)
                 self.mecanum_pub.publish(twist)
 
@@ -391,46 +420,69 @@ class SelfDrivingNodeLB:
             rospy.sleep(0.01)
 
     def get_od_callback(self, od_msg):
-        od_objects_info = od_msg.objects
-        if od_objects_info == []:
-            print("No objects detected.")
+        self.update_object_distance_from_detections(
+            [{'class_name': obj.class_name, 'box': list(obj.box), 'score': obj.score} for obj in od_msg.objects]
+        )
+
+    def lb_object_result_callback(self, msg):
+        try:
+            detections = json.loads(msg.data)
+            if isinstance(detections, list):
+                self.update_object_distance_from_detections(detections)
+        except Exception as e:
+            rospy.logerr(f"Load balancer object parse error: {e}")
+
+    def update_object_distance_from_detections(self, detections):
+        self.object_results_timestamp = time.time()
+        if self.depth_image is None:
+            return
+
+        filtered_boxes = []
+        for detection in detections:
+            if detection.get('class_name') == self.target_class:
+                filtered_boxes.append(detection.get('box'))
+
+        if filtered_boxes:
+            best_distance = None
+            for bbox in filtered_boxes:
+                if bbox is not None:
+                    bbox_list = list(bbox)
+                    coordinates = self.get_coordinates(bbox_list)
+                    if coordinates:
+                        distance = self.get_distance(self.depth_image, coordinates)
+                        if distance is not None and (best_distance is None or distance < best_distance):
+                            best_distance = distance
+            self.object_distance = best_distance
         else:
-            filtered_boxes = []
-            filtered_scores = []
-
-            for i in od_objects_info:
-                class_name = i.class_name
-                if class_name==self.target_class:
-                    filtered_boxes.append(i.box)
-                    filtered_scores.append(i.score)
-
-            if filtered_boxes:
-                for i in range(len(filtered_boxes)):
-                    bbox = filtered_boxes[i]
-                    
-                    if bbox is not None:
-                        bbox_list = list(bbox)
-                        coordinates = self.get_coordinates(bbox_list)
-                        if coordinates:
-                            self.object_distance = self.get_distance(self.depth_image, coordinates)
-                        else:
-                            self.object_distance=None
-            else:
-                self.object_distance=None
-                return None
+            self.object_distance = None
+            return None
 
     def get_object_callback(self, msg):
-        objects_info = msg.objects
-        if objects_info == []:
+        self.update_traffic_state(
+            [{'class_name': obj.class_name, 'box': list(obj.box), 'score': obj.score} for obj in msg.objects]
+        )
+
+    def lb_traffic_result_callback(self, msg):
+        try:
+            detections = json.loads(msg.data)
+            if isinstance(detections, list):
+                self.update_traffic_state(detections)
+        except Exception as e:
+            rospy.logerr(f"Load balancer traffic parse error: {e}")
+
+    def update_traffic_state(self, detections):
+        self.traffic_results_timestamp = time.time()
+        if detections == []:
             self.traffic_signs_status = None
             self.crosswalk_distance = 0
         else:
             min_distance = 0
-            for i in objects_info:
-                class_name = i.class_name
-                center = (int((i.box[0] + i.box[2])/2), int((i.box[1] + i.box[3])/2))
-                
-                if class_name == 'crosswalk':  
+            for detection in detections:
+                class_name = detection.get('class_name')
+                box = detection.get('box', [0, 0, 0, 0])
+                center = (int((box[0] + box[2])/2), int((box[1] + box[3])/2))
+
+                if class_name == 'crosswalk':
                     if center[1] > min_distance:
                         min_distance = center[1]
                 elif class_name == 'right':
@@ -443,7 +495,7 @@ class SelfDrivingNodeLB:
                     self.park_x = center[0]
                 elif class_name == 'red' or class_name == 'green':
                     self.traffic_signs_status = class_name
-        
+
             self.crosswalk_distance = min_distance
             
 if __name__ == "__main__":
