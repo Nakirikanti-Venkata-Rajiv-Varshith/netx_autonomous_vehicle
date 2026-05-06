@@ -17,7 +17,7 @@ So yes — after reclone you MUST recreate symlinks.
 
 2. Lets create system links
 
-Run all of these 🔥
+Run all of these 
 ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_tested_load.py ~/ros_ws/src/hiwonder_example/scripts/netx_tested_load.py
 ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_bandwidth_monitor.py ~/ros_ws/src/hiwonder_example/scripts/netx_bandwidth_monitor.py
 ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/netx_navigation.py ~/ros_ws/src/hiwonder_example/scripts/netx_navigation.py
