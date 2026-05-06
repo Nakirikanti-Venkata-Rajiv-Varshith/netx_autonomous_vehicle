@@ -138,80 +138,110 @@ class YoLov5TRT(object):
         self.batch_size = engine.max_batch_size
 
     def infer(self, raw_image_generator):
-        # Make self the active context, pushing it on top of the context stack.
+    # Make self the active context, pushing it on top of the context stack.
         self.ctx.push()
 
+        try:
         # if self.ctx != pycuda.autoinit.context:
         #     self.ctx = pycuda.autoinit.context
 
         # Restore
-        stream = self.stream
-        context = self.context
-        engine = self.engine
-        host_inputs = self.host_inputs
-        cuda_inputs = self.cuda_inputs
-        host_outputs = self.host_outputs
-        cuda_outputs = self.cuda_outputs
-        bindings = self.bindings
-        # Do image preprocess
-        batch_image_raw = []
-        batch_origin_h = []
-        batch_origin_w = []
-        batch_input_image = np.empty(shape=[self.batch_size, 3, self.input_h, self.input_w])
-        
-        input_image, image_raw, origin_h, origin_w = self.preprocess_image(raw_image_generator)
-        batch_image_raw.append(image_raw)
-        batch_origin_h.append(origin_h)
-        batch_origin_w.append(origin_w)
-        np.copyto(batch_input_image[0], input_image)
-        
-        batch_input_image = np.ascontiguousarray(batch_input_image)
+            stream = self.stream
+            context = self.context
+            engine = self.engine
+            host_inputs = self.host_inputs
+            cuda_inputs = self.cuda_inputs
+            host_outputs = self.host_outputs
+            cuda_outputs = self.cuda_outputs
+            bindings = self.bindings
 
-        # Copy input image to host buffer
-        np.copyto(host_inputs[0], batch_input_image.ravel())
-        start = time.time()
-        # Transfer input data  to the GPU.
-        cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
-        # Run inference.
-        context.execute_async(batch_size=self.batch_size, bindings=bindings, stream_handle=stream.handle)
-        # Transfer predictions back from the GPU.
-        cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
-        # Synchronize the stream
-        stream.synchronize()
-        end = time.time()
-        
-        # Remove any context from the top of the context stack, deactivating it.
-        # self.ctx.pop()
-        # Here we use the first row of output in that batch_size = 1
-        output = host_outputs[0]
-        # Do postprocess
-        boxes = []
-        scores = []
-        classid = []
-        for i in range(self.batch_size):
-            result_boxes, result_scores, result_classid = self.post_process(
-                output[i * LEN_ALL_RESULT: (i + 1) * LEN_ALL_RESULT], batch_origin_h[i], batch_origin_w[i]
+            # Do image preprocess
+            batch_image_raw = []
+            batch_origin_h = []
+            batch_origin_w = []
+            batch_input_image = np.empty(
+                shape=[self.batch_size, 3, self.input_h, self.input_w]
             )
-            # Draw rectangles and labels on the original image
-            for j in range(len(result_boxes)):
-                '''
-                box = result_boxes[j]
-                color = colors(int(result_classid[j]), True)
-                plot_one_box(
-                    box,
-                    batch_image_raw[i],
-                    color=color,
-                    label="{}:{:.2f}".format(
-                        self.categories[int(result_classid[j])], result_scores[j]
-                    ),
+
+            input_image, image_raw, origin_h, origin_w = self.preprocess_image(raw_image_generator)
+
+            batch_image_raw.append(image_raw)
+            batch_origin_h.append(origin_h)
+            batch_origin_w.append(origin_w)
+
+            np.copyto(batch_input_image[0], input_image)
+
+            batch_input_image = np.ascontiguousarray(batch_input_image)
+
+            # Copy input image to host buffer
+            np.copyto(host_inputs[0], batch_input_image.ravel())
+
+            start = time.time()
+
+            # Transfer input data to the GPU.
+            cuda.memcpy_htod_async(cuda_inputs[0], host_inputs[0], stream)
+
+            # Run inference.
+            context.execute_async(
+                batch_size=self.batch_size,
+                bindings=bindings,
+                stream_handle=stream.handle
+            )
+
+            # Transfer predictions back from the GPU.
+            cuda.memcpy_dtoh_async(host_outputs[0], cuda_outputs[0], stream)
+
+            # Synchronize the stream
+            stream.synchronize()
+
+            end = time.time()
+
+            # Here we use the first row of output in that batch_size = 1
+            output = host_outputs[0]
+
+            # Do postprocess
+            boxes = []
+            scores = []
+            classid = []
+
+            for i in range(self.batch_size):
+
+                result_boxes, result_scores, result_classid = self.post_process(
+                    output[i * LEN_ALL_RESULT: (i + 1) * LEN_ALL_RESULT],
+                    batch_origin_h[i],
+                    batch_origin_w[i]
                 )
-                '''
-                boxes.extend([result_boxes[j]])
-                scores.append(result_scores[j])
-                classid.append(int(result_classid[j]))
-        #print(int(1/(end - start)))
-        # print(boxes,scores,classid)
-        return boxes, scores, classid 
+
+                # Draw rectangles and labels on the original image
+                for j in range(len(result_boxes)):
+                    '''
+                    box = result_boxes[j]
+                    color = colors(int(result_classid[j]), True)
+
+                    plot_one_box(
+                        box,
+                        batch_image_raw[i],
+                        color=color,
+                        label="{}:{:.2f}".format(
+                            self.categories[int(result_classid[j])],
+                            result_scores[j]
+                        ),
+                    )
+                    '''
+
+                    boxes.extend([result_boxes[j]])
+                    scores.append(result_scores[j])
+                    classid.append(int(result_classid[j]))
+
+            # print(int(1/(end - start)))
+            # print(boxes,scores,classid)
+
+            return boxes, scores, classid
+
+        finally:
+        # Remove any context from the top of the context stack,
+        # deactivating it even if inference fails.
+            self.ctx.pop() 
 
     def destroy(self):
         # Remove any context from the top of the context stack, deactivating it.

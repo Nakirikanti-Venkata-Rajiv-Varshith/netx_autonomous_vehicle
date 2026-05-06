@@ -267,7 +267,6 @@ class SelfDrivingNodeLB:
             if self.binary_image is not None:
                 logging.debug(f"Binary image received: {self.binary_image.shape}")
                 # cv2.imshow('result', self.binary_image)
-                cv2.waitKey(1)
         except Exception as e:
             rospy.logerr(f"Error converting binary image: {e}")
 
@@ -343,7 +342,7 @@ class SelfDrivingNodeLB:
         min_distance = min(non_zero) if non_zero else None
         if min_distance is not None:
             distance_m = min_distance/1000.0
-            logging.info(f"[Distance] min_distance={distance_m:.3f} m, frame_id={getattr(self,'frame_id','NA')}")
+            logging.debug(f"[Distance] min_distance={distance_m:.3f} m, frame_id={getattr(self,'frame_id','NA')}")
             return distance_m
         return None
 
