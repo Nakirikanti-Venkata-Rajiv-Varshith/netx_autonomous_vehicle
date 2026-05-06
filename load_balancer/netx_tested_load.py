@@ -246,7 +246,10 @@ class LoadBalancerNode:
                     if gpu_match:
                         cache["gpu_percent"] = int(gpu_match.group(1))
 
-                    power_match = re.search(r"POM_5V_IN (\d+)/(\d+)", line)
+                    power_match = re.search(
+                        r"POM_5V_IN\s+(\d+)(?:mW)?/(\d+)(?:mW)?",
+                        line
+                    )
                     if power_match:
                         power_now = float(power_match.group(1))
                         self._power_window.append(power_now)
