@@ -6,18 +6,37 @@
     <include file="$(find hiwonder_servo_controllers)/launch/start.launch"/>
     <include file="$(find hiwonder_controller)/launch/hiwonder_controller.launch"/>
 
-    <arg name="yolo_node_name" default="yolov5_lb" />
-    <rosparam param="/$(arg yolo_node_name)/classes">['go', 'right', 'park', 'red', 'green', 'crosswalk']</rosparam>
-    <rosparam param="/$(arg yolo_node_name)/od_classes">["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-           "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "#sheep", "cow",
-           "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-           "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
-           "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-           "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-           "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
-           "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-           "hair drier", "toothbrush"]</rosparam>
-    <node unless="$(arg only_line_follow)" pkg="hiwonder_example" type="lb-yolo.py" name="$(arg yolo_node_name)" output="screen">
+    <!-- YOLO NODE -->
+    <arg name="yolo_node_name" default="yolov5_lb_setb" />
+
+    <rosparam param="/$(arg yolo_node_name)/classes">
+        ['go', 'right', 'park', 'red', 'green', 'crosswalk']
+    </rosparam>
+
+    <rosparam param="/$(arg yolo_node_name)/od_classes">
+        ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+         "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+         "parking meter", "bench", "bird", "cat", "dog", "horse", "#sheep",
+         "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+         "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
+         "snowboard", "sports ball", "kite", "baseball bat",
+         "baseball glove", "skateboard", "surfboard", "tennis racket",
+         "bottle", "wine glass", "cup", "fork", "knife", "spoon",
+         "bowl", "banana", "apple", "sandwich", "orange", "broccoli",
+         "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+         "couch", "potted plant", "bed", "dining table", "toilet",
+         "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+         "microwave", "oven", "toaster", "sink", "refrigerator",
+         "book", "clock", "vase", "scissors", "teddy bear",
+         "hair drier", "toothbrush"]
+    </rosparam>
+
+    <node unless="$(arg only_line_follow)"
+          pkg="hiwonder_example"
+          type="netx_lb_yolo.py"
+          name="$(arg yolo_node_name)"
+          output="screen">
+
         <param name="use_depth_cam" value="true"/>
         <param name="engine" value="traffic_signs_640s_7_0.engine"/>
         <param name="od_engine" value="yolov5n.engine"/>
@@ -25,45 +44,77 @@
         <param name="conf_thresh" value="0.3"/>
         <param name="frame_skip" value="2"/>
         <param name="cache_ttl" value="0.25"/>
-        <param name="image_path" value="/home/hiwonder/ros_ws/src/hiwonder_example/scripts/self_driving/right-side.png"/>
+
+        <param name="image_path"
+               value="/home/hiwonder/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/right-side.png"/>
     </node>
 
-    <arg name="self_driving_node_name" default="self_driving_lb" />
-    <node pkg="hiwonder_example" type="self_dri.py" name="$(arg self_driving_node_name)" output="screen">
+    <!-- SELF DRIVING -->
+    <arg name="self_driving_node_name" default="self_driving_lb_setb" />
+
+    <node pkg="hiwonder_example"
+          type="netx_self_driving.py"
+          name="$(arg self_driving_node_name)"
+          output="screen">
+
         <param name="only_line_follow" value="$(arg only_line_follow)"/>
     </node>
 
-    <node pkg="hiwonder_example" type="bandwidth_monitor_node.py" name="bandwidth_monitor_node" output="screen">
+    <!-- BANDWIDTH MONITOR -->
+    <node pkg="hiwonder_example"
+          type="netx_bandwidth_monitor.py"
+          name="netx_bandwidth_monitor_node_setb"
+          output="screen">
+
         <param name="interface" value="wlan0"/>
         <param name="edge_host" value="192.168.20.16"/>
         <param name="sample_period" value="1.0"/>
         <param name="rtt_window" value="12"/>
     </node>
 
-    <node pkg="hiwonder_example" type="navigation.py" name="lane_detector" output="screen">
+    <!-- NAVIGATION -->
+    <node pkg="hiwonder_example"
+          type="netx_navigation.py"
+          name="lane_detector_setb"
+          output="screen">
+
         <param name="use_depth_cam" value="true"/>
     </node>
 
-    <node pkg="hiwonder_example" type="tested_load.py" name="load_balancer" output="screen">
-        <param name="applications" value="['lane_detection','collision_avoidance','traffic_sign_detection']" type="yaml" />
+    <!-- LOAD BALANCER -->
+    <node pkg="hiwonder_example"
+          type="netx_tested_load.py"
+          name="load_balancer_setb"
+          output="screen">
+
+        <param name="applications"
+               value="['lane_detection','collision_avoidance','traffic_sign_detection']"
+               type="yaml" />
+
         <param name="use_depth_cam" value="true"/>
         <param name="edge_server_url" value="http://192.168.20.16:30052/processimage"/>
         <param name="only_line_follow" value="$(arg only_line_follow)"/>
+
         <param name="resource_threshold" value="80" />
         <param name="bandwidth_high_threshold" value="7" />
         <param name="bandwidth_low_threshold" value="2" />
+
         <param name="edge_target_width" value="640" />
         <param name="cloud_target_width" value="960" />
         <param name="cloud_target_height" value="1080" />
+
         <param name="low_res_scale" value="0.65" />
         <param name="edge_timeout" value="2.0" />
         <param name="cloud_delay_threshold" value="0.75" />
+
         <param name="dual_path_threshold" value="0.60" />
         <param name="dual_path_margin" value="0.15" />
+
         <param name="power_budget_mw" value="3200" />
         <param name="min_processing_interval" value="0.08" />
         <param name="max_cloud_queue" value="4" />
         <param name="cloud_roi_headers_only" value="true" />
         <param name="max_requests" value="100"/>
     </node>
+
 </launch>
