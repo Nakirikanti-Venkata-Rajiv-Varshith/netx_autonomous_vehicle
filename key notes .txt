@@ -1,0 +1,46 @@
+## I am using system links reason simple ros is getting confused between the 
+# load_balancer_main and my netx_autonomous_vehicles so we create symlinks so it wont
+@ gret confuswd while running the launch files
+
+Run thse after clonning full repo
+
+# Check any before syestem Links are there are there are not 
+1. ls ~/ros_ws/src/hiwonder_example/scripts/netx_*
+
+expected:
+
+“No such file”
+OR
+missing files
+So yes — after reclone you MUST recreate symlinks.
+
+
+2. Lets create system links
+
+Run all of these 🔥
+ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_tested_load.py ~/ros_ws/src/hiwonder_example/scripts/netx_tested_load.py
+ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_bandwidth_monitor.py ~/ros_ws/src/hiwonder_example/scripts/netx_bandwidth_monitor.py
+ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/netx_navigation.py ~/ros_ws/src/hiwonder_example/scripts/netx_navigation.py
+ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/netx_self_driving.py ~/ros_ws/src/hiwonder_example/scripts/netx_self_driving.py
+ln -s ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/yolov5_detect_merge/netx_lb_yolo.py ~/ros_ws/src/hiwonder_example/scripts/netx_lb_yolo.py
+
+
+3. Now we have to give them the permssion to run them 
+cases:- after semlinks are created aftering cloning the repo
+        2. if u pulled any code from repo after changes so give again permmsions just for safety
+
+
+chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_*.py
+chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/*.py
+chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/*.py
+chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/yolov5_detect_merge/*.py
+
+3. run this
+source ~/ros_ws/devel/setup.bash
+
+
+4. Final launch file execution
+
+roslaunch ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_load_balancer_main.launch
+
+# Done this is how we run this
