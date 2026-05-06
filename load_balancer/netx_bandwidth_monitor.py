@@ -50,7 +50,7 @@ class BandwidthMonitorNode:
         rtt_ms = None
         try:
             start = time.time()
-            with socket.create_connection((self.edge_host, 80), timeout=0.2):
+            with socket.create_connection((self.edge_host, 30052), timeout=0.2):
                 rtt_ms = (time.time() - start) * 1000.0
         except Exception:
             rtt_ms = None
