@@ -11,7 +11,7 @@ from std_msgs.msg import Float32MultiArray
 
 class BandwidthMonitorNode:
     def __init__(self):
-        rospy.init_node("bandwidth_monitor_node")
+        rospy.init_node("bandwidth_monitor_node_setb")
 
         self.interface = rospy.get_param("~interface", "wlan0")
         self.edge_host = rospy.get_param("~edge_host", "192.168.20.16")

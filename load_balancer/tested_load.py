@@ -159,7 +159,7 @@ class LoadBalancerNode:
         threading.Thread(target=self._cloud_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
-            "~/ros_ws/src/hiwonder_example/scripts/load_balancer_main/load_balancer/load_balancer_logs"
+            "~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/load_balancer_logs"
         )
         os.makedirs(log_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1298,4 +1298,4 @@ class LoadBalancerNode:
 
 
 if __name__ == "__main__":
-    LoadBalancerNode("load_balancer")
+    LoadBalancerNode("load_balancer_setb")
