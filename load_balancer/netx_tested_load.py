@@ -519,6 +519,38 @@ class LoadBalancerNode:
         power_mw=None,
     ):
         profile = profile or self.scene_profile
+        # ==================================================
+        # FORCE CLOUD FOR NON-CRITICAL APPLICATIONS
+        # ==================================================
+
+        cloud_preferred_apps = [
+            "traffic_sign_detection",
+            "traffic_light_detection",
+            "infotainment",
+        ]
+
+        if (
+            app in cloud_preferred_apps
+            and self.upload_speed > 4
+            and (self.rtt_ms or 999) < 80):
+            # fallback if network/cloud unavailable
+            if not self.network_ok or not edge_available:
+                return {
+                    "route": "onboard",
+                    "edge_score": 1.0,
+                    "cloud_score": 0.0,
+                    "publish_cached": False,
+                    "force_fresh": True,
+                }
+
+            return {
+                "route": "offboard",
+                "edge_score": 0.2,
+                "cloud_score": 0.9,
+                "publish_cached": False,
+                "force_fresh": True,
+            }
+
         latency_critical = latency_sensitivity == "high"
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
