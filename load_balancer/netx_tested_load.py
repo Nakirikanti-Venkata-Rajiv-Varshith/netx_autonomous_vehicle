@@ -329,15 +329,27 @@ class LoadBalancerNode:
     def bandwidth_callback(self, msg):
         data = list(msg.data)
         if len(data) >= 2:
-            self.upload_speed = float(data[0])
-            self.download_speed = float(data[1])
+            alpha = 0.2
+            self.upload_speed = (
+                alpha * float(data[0])
+                + (1 - alpha) * self.upload_speed
+            )
+            gamma = 0.2
+            self.download_speed = (
+                gamma * float(data[1])
+                + (1 - gamma) * self.download_speed
+            )
         if len(data) >= 4:
             self.rtt_ms = None if data[2] < 0 else float(data[2])
             self.jitter_ms = float(data[3])
         if len(data) >= 5:
             self.network_ok = bool(round(data[4]))
         else:
-            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+            # self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+            self.network_ok = (
+                self.rtt_ms is not None
+                and self.rtt_ms < 300
+            )
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
@@ -529,19 +541,20 @@ class LoadBalancerNode:
             "infotainment",
         ]
 
-        if (
-            app in cloud_preferred_apps
-            and self.upload_speed > 4
-            and (self.rtt_ms or 999) < 80):
-            # fallback if network/cloud unavailable
-            if not self.network_ok or not edge_available:
-                return {
-                    "route": "onboard",
-                    "edge_score": 1.0,
-                    "cloud_score": 0.0,
-                    "publish_cached": False,
-                    "force_fresh": True,
-                }
+        # if (
+        #     app in cloud_preferred_apps
+        #     and self.upload_speed > 4
+        #     and (self.rtt_ms or 999) < 80):
+        #     # fallback if network/cloud unavailable
+        #     if not self.network_ok or not edge_available:
+        #         return {
+        #             "route": "onboard",
+        #             "edge_score": 1.0,
+        #             "cloud_score": 0.0,
+        #             "publish_cached": False,
+        #             "force_fresh": True,
+        #         }
+        if app in cloud_preferred_apps:
 
             return {
                 "route": "offboard",

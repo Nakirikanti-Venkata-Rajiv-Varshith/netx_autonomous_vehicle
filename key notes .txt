@@ -5,7 +5,8 @@
 Run thse after clonning full repo
 
 # Check any before syestem Links are there are there are not 
-1. ls ~/ros_ws/src/hiwonder_example/scripts/netx_*
+1. 
+ls ~/ros_ws/src/hiwonder_example/scripts/netx_*
 
 expected:
 
