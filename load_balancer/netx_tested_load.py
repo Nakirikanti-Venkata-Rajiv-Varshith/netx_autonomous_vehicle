@@ -531,38 +531,6 @@ class LoadBalancerNode:
         power_mw=None,
     ):
         profile = profile or self.scene_profile
-        # ==================================================
-        # FORCE CLOUD FOR NON-CRITICAL APPLICATIONS
-        # ==================================================
-
-        cloud_preferred_apps = [
-            "traffic_sign_detection",
-            "traffic_light_detection",
-            "infotainment",
-        ]
-
-        # if (
-        #     app in cloud_preferred_apps
-        #     and self.upload_speed > 4
-        #     and (self.rtt_ms or 999) < 80):
-        #     # fallback if network/cloud unavailable
-        #     if not self.network_ok or not edge_available:
-        #         return {
-        #             "route": "onboard",
-        #             "edge_score": 1.0,
-        #             "cloud_score": 0.0,
-        #             "publish_cached": False,
-        #             "force_fresh": True,
-        #         }
-        if app in cloud_preferred_apps:
-
-            return {
-                "route": "offboard",
-                "edge_score": 0.2,
-                "cloud_score": 0.9,
-                "publish_cached": False,
-                "force_fresh": True,
-            }
 
         latency_critical = latency_sensitivity == "high"
         tracker_uncertainty = self.get_tracker_uncertainty(app)
@@ -602,55 +570,150 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.25) + (low_motion * 0.2) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.15))
 
-        if latency_critical:
-            edge_score = clamp(edge_score + 0.2)
-            cloud_score = clamp(cloud_score - 0.15)
+            ### THIS PART WE CHANGED FOR EXPERMINET PLEASE RECHANGE IT AFTER USEING#####
+        # edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.25) + (low_motion * 0.2) + (power_saving * 0.2))
+        # cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.15))
 
-        if power_mw and power_mw > self.power_budget_mw:
-            cloud_score = clamp(cloud_score - 0.2)
+        # if latency_critical:
+        #     edge_score = clamp(edge_score + 0.2)
+        #     cloud_score = clamp(cloud_score - 0.15)
 
-        publish_cached = (
-            not fresh_required
-            and tracker_uncertainty < 0.35
-            and profile["change_score"] < 0.08
-            and profile["motion_score"] < 0.5
-        )
+        # if power_mw and power_mw > self.power_budget_mw:
+        #     cloud_score = clamp(cloud_score - 0.2)
 
-        if edge_score >= self.dual_path_threshold and cloud_score >= self.dual_path_threshold:
-            if abs(edge_score - cloud_score) <= self.dual_path_margin or fresh_required:
-                route = "dual_path"
+        # publish_cached = (
+        #     not fresh_required
+        #     and tracker_uncertainty < 0.35
+        #     and profile["change_score"] < 0.08
+        #     and profile["motion_score"] < 0.5
+        # )
+
+        # if edge_score >= self.dual_path_threshold and cloud_score >= self.dual_path_threshold:
+        #     if abs(edge_score - cloud_score) <= self.dual_path_margin or fresh_required:
+        #         route = "dual_path"
+        #     else:
+        #         route = "onboard" if edge_score >= cloud_score else "offboard"
+        # else:
+        #     route = "onboard" if edge_score >= cloud_score else "offboard"
+
+        # if route == "offboard" and bandwidth_quality < 0.45:
+        #     route = "lower_resolution"
+
+        # if latency_critical and edge_score >= 0.5:
+        #     route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
+
+        # rospy.loginfo(
+        #     "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
+        #     app,
+        #     edge_score,
+        #     cloud_score,
+        #     route,
+        #     fresh_required,
+        #     "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+        #     self.jitter_ms,
+        #     self.get_cloud_queue_depth(),
+        # )
+        # return {
+        #     "route": route,
+        #     "edge_score": round(edge_score, 4),
+        #     "cloud_score": round(cloud_score, 4),
+        #     "publish_cached": publish_cached,
+        #     "force_fresh": fresh_required,
+        # }
+
+
+                # ==========================================================
+        # SIMPLE IF-ELSE BASED ROUTING
+        # ==========================================================
+
+        edge_score = 0.0
+        cloud_score = 0.0
+
+        avg_resource_usage = max(cpu_usage, gpu_usage, ram_usage)
+
+        # realtime network speed
+
+
+
+                   ################# COMMENT OUT AFTER WORK AGAIN #########################
+        # upload_speed, download_speed = self.get_network_speed()
+
+        # ----------------------------------------------------------
+        # LATENCY SENSITIVE APPLICATIONS
+        # ----------------------------------------------------------
+
+        if latency_sensitivity == "high":
+
+            # local resources available
+            if avg_resource_usage < 80.0:
+
+                route = "onboard"
+                edge_score = 1.0
+                cloud_score = 0.0
+
             else:
-                route = "onboard" if edge_score >= cloud_score else "offboard"
+
+                # check network speed
+                if (
+                    self.network_ok
+                    and upload_speed >= 7.0
+                ):
+
+                    route = "offboard"
+                    edge_score = 0.0
+                    cloud_score = 1.0
+
+                else:
+
+                    route = "onboard"
+                    edge_score = 1.0
+                    cloud_score = 0.0
+
+        # ----------------------------------------------------------
+        # NON LATENCY SENSITIVE APPLICATIONS
+        # ----------------------------------------------------------
+
         else:
-            route = "onboard" if edge_score >= cloud_score else "offboard"
 
-        if route == "offboard" and bandwidth_quality < 0.45:
-            route = "lower_resolution"
+            if (
+                self.network_ok
+                and upload_speed >= 7.0
+                and accuracy_priority == "high"
+            ):
 
-        if latency_critical and edge_score >= 0.5:
-            route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
+                route = "offboard"
+                edge_score = 0.0
+                cloud_score = 1.0
+
+            else:
+
+                route = "onboard"
+                edge_score = 1.0
+                cloud_score = 0.0
 
         rospy.loginfo(
-            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
-            app,
-            edge_score,
-            cloud_score,
-            route,
-            fresh_required,
-            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-            self.jitter_ms,
-            self.get_cloud_queue_depth(),
+            "[IF-ELSE DECISION] "
+            f"app={app} "
+            f"route={route} "
+            f"edge={edge_score:.2f} "
+            f"cloud={cloud_score:.2f} "
+            f"upload={upload_speed:.2f} "
+            f"cpu={cpu_usage:.2f} "
+            f"gpu={gpu_usage:.2f} "
+            f"ram={ram_usage:.2f}"
         )
+
+
+
         return {
             "route": route,
-            "edge_score": round(edge_score, 4),
-            "cloud_score": round(cloud_score, 4),
-            "publish_cached": publish_cached,
-            "force_fresh": fresh_required,
+            "edge_score": edge_score,
+            "cloud_score": cloud_score,
+            "publish_cached": False,
+            "force_fresh": True,
         }
+
 
     def check_edge_server_available(self):
         now = time.time()
