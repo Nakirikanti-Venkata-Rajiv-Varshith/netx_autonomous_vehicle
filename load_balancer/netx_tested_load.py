@@ -115,7 +115,7 @@ class LoadBalancerNode:
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
         self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
-        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.08)
+        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.1)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 5.0)
@@ -482,22 +482,29 @@ class LoadBalancerNode:
         flow_gray = cv2.resize(gray, (160, 90))
         embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
 
+        # motion_score = 0.0
+        # if self.scene_gray is not None:
+        #     flow = cv2.calcOpticalFlowFarneback(
+        #         self.scene_gray,
+        #         flow_gray,
+        #         None,
+        #         0.5,
+        #         3,
+        #         15,
+        #         3,
+        #         5,
+        #         1.2,
+        #         0,
+        #     )
+        #     magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        #     motion_score = float(np.mean(magnitude))
         motion_score = 0.0
+
         if self.scene_gray is not None:
-            flow = cv2.calcOpticalFlowFarneback(
-                self.scene_gray,
-                flow_gray,
-                None,
-                0.5,
-                3,
-                15,
-                3,
-                5,
-                1.2,
-                0,
-            )
-            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-            motion_score = float(np.mean(magnitude))
+            frame_diff = cv2.absdiff(self.scene_gray, flow_gray)
+
+            # normalized motion intensity
+            motion_score = float(np.mean(frame_diff)) / 255.0
 
         edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
         texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
@@ -604,7 +611,7 @@ class LoadBalancerNode:
 
         if (
             latency_critical
-            and edge_score >= 0.85
+            and edge_score >= 0.80
             and fresh_required
         ):
             route = "onboard"
