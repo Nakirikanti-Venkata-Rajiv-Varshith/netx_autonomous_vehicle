@@ -204,7 +204,7 @@ class LoadBalancerNode:
             Image,
             self.image_callback,
             queue_size=1,
-            buff_size=2**24,
+            buff_size=2**22,
         )
 
         self.wait_for_services()
@@ -317,7 +317,7 @@ class LoadBalancerNode:
                 return
 
             raw = np.frombuffer(ros_image.data, dtype=np.uint8)
-            image = raw.reshape((ros_image.height, ros_image.width, 3)).copy()
+            image = raw.reshape((ros_image.height, ros_image.width, 3))
             if encoding == "bgr8":
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
@@ -365,8 +365,8 @@ class LoadBalancerNode:
         self.frame_timing[frame_uuid] = {"t_capture": capture_time}
         self.start_pub.publish(capture_time)
 
-        if len(self.frame_timing) > 500:
-            oldest = sorted(self.frame_timing.keys())[:250]
+        if len(self.frame_timing) > 120:
+            oldest = sorted(self.frame_timing.keys())[:60]
             for key in oldest:
                 self.frame_timing.pop(key, None)
 
@@ -553,9 +553,14 @@ class LoadBalancerNode:
 
         rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
         jitter_penalty = clamp(self.jitter_ms / 80.0)
-        bandwidth_quality = clamp(
-            min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
-        )
+
+
+         #### WE ARE CLAMPING THE DATA SO WE ARE MOSTLY GETTING ZERO mbps
+        # bandwidth_quality = clamp(
+        #     min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
+        # )
+
+        bandwidth_quality = 1.0 if self.network_ok else 0.0
         low_latency = clamp(1.0 - ((rtt_penalty * 0.65) + (jitter_penalty * 0.2) + (queue_depth * 0.15)))
         low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
         low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
@@ -570,154 +575,55 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.25) + (low_motion * 0.2) + (power_saving * 0.2))
+        cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.15))
 
-            ### THIS PART WE CHANGED FOR EXPERMINET PLEASE RECHANGE IT AFTER USEING#####
-        # edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.25) + (low_motion * 0.2) + (power_saving * 0.2))
-        # cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.15))
+        if latency_critical:
+            edge_score = clamp(edge_score + 0.2)
+            cloud_score = clamp(cloud_score - 0.15)
 
-        # if latency_critical:
-        #     edge_score = clamp(edge_score + 0.2)
-        #     cloud_score = clamp(cloud_score - 0.15)
+        if power_mw and power_mw > self.power_budget_mw:
+            cloud_score = clamp(cloud_score - 0.2)
 
-        # if power_mw and power_mw > self.power_budget_mw:
-        #     cloud_score = clamp(cloud_score - 0.2)
-
-        # publish_cached = (
-        #     not fresh_required
-        #     and tracker_uncertainty < 0.35
-        #     and profile["change_score"] < 0.08
-        #     and profile["motion_score"] < 0.5
-        # )
-
-        # if edge_score >= self.dual_path_threshold and cloud_score >= self.dual_path_threshold:
-        #     if abs(edge_score - cloud_score) <= self.dual_path_margin or fresh_required:
-        #         route = "dual_path"
-        #     else:
-        #         route = "onboard" if edge_score >= cloud_score else "offboard"
-        # else:
-        #     route = "onboard" if edge_score >= cloud_score else "offboard"
-
-        # if route == "offboard" and bandwidth_quality < 0.45:
-        #     route = "lower_resolution"
-
-        # if latency_critical and edge_score >= 0.5:
-        #     route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
-
-        # rospy.loginfo(
-        #     "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
-        #     app,
-        #     edge_score,
-        #     cloud_score,
-        #     route,
-        #     fresh_required,
-        #     "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-        #     self.jitter_ms,
-        #     self.get_cloud_queue_depth(),
-        # )
-        # return {
-        #     "route": route,
-        #     "edge_score": round(edge_score, 4),
-        #     "cloud_score": round(cloud_score, 4),
-        #     "publish_cached": publish_cached,
-        #     "force_fresh": fresh_required,
-        # }
-
-
-                # ==========================================================
-        # SIMPLE IF-ELSE BASED ROUTING
-        # ==========================================================
-
-        edge_score = 0.0
-        cloud_score = 0.0
-
-        avg_resource_usage = max(cpu_usage, gpu_usage, ram_usage)
-
-        # realtime network speed
-
-
-
-                   ################# COMMENT OUT AFTER WORK AGAIN #########################
-        # upload_speed, download_speed = self.get_network_speed()
-
-        # ----------------------------------------------------------
-        # LATENCY SENSITIVE APPLICATIONS
-        # ----------------------------------------------------------
-
-        change_value = 0.1
-
-        if latency_sensitivity == "high":
-
-            # local resources available
-            if avg_resource_usage < 80.0:
-
-                route = "onboard"
-                edge_score = 1.0
-                cloud_score = 0.0
-
-            else:
-
-                # check network speed
-                if (
-                    self.network_ok
-                    and upload_speed >= change_value
-                ):
-
-                    route = "offboard"
-                    edge_score = 0.0
-                    cloud_score = 1.0
-                    change_value = 2
-
-                else:
-
-                    route = "onboard"
-                    edge_score = 1.0
-                    cloud_score = 0.0
-
-        # ----------------------------------------------------------
-        # NON LATENCY SENSITIVE APPLICATIONS
-        # ----------------------------------------------------------
-
-        else:
-
-            if (
-                self.network_ok
-                and upload_speed >= change_value
-                and accuracy_priority == "high"
-            ):
-
-                route = "offboard"
-                edge_score = 0.0
-                cloud_score = 1.0
-                change_value = 2
-
-            else:
-
-                route = "onboard"
-                edge_score = 1.0
-                cloud_score = 0.0
-
-        rospy.loginfo(
-            "[IF-ELSE DECISION] "
-            f"app={app} "
-            f"route={route} "
-            f"edge={edge_score:.2f} "
-            f"cloud={cloud_score:.2f} "
-            f"upload={upload_speed:.2f} "
-            f"cpu={cpu_usage:.2f} "
-            f"gpu={gpu_usage:.2f} "
-            f"ram={ram_usage:.2f}"
+        publish_cached = (
+            not fresh_required
+            and tracker_uncertainty < 0.35
+            and profile["change_score"] < 0.08
+            and profile["motion_score"] < 0.5
         )
 
+        if edge_score >= self.dual_path_threshold and cloud_score >= self.dual_path_threshold:
+            if abs(edge_score - cloud_score) <= self.dual_path_margin or fresh_required:
+                route = "dual_path"
+            else:
+                route = "onboard" if edge_score >= cloud_score else "offboard"
+        else:
+            route = "onboard" if edge_score >= cloud_score else "offboard"
 
+        if route == "offboard" and bandwidth_quality < 0.45:
+            route = "lower_resolution"
 
+        if latency_critical and edge_score >= 0.75:
+            route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
+
+        rospy.loginfo(
+            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
+            app,
+            edge_score,
+            cloud_score,
+            route,
+            fresh_required,
+            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+            self.jitter_ms,
+            self.get_cloud_queue_depth(),
+        )
         return {
             "route": route,
-            "edge_score": edge_score,
-            "cloud_score": cloud_score,
-            "publish_cached": False,
-            "force_fresh": True,
+            "edge_score": round(edge_score, 4),
+            "cloud_score": round(cloud_score, 4),
+            "publish_cached": publish_cached,
+            "force_fresh": fresh_required,
         }
-
 
     def check_edge_server_available(self):
         now = time.time()
@@ -875,7 +781,7 @@ class LoadBalancerNode:
         target_height = self.cloud_target_height
 
         resize_ratio = min(float(target_width) / cropped_frame.shape[1], float(target_height) / cropped_frame.shape[0])
-        resize_ratio = min(resize_ratio, 1.0 if location_label == "edge_low_res" else 1.5)
+        resize_ratio = min(resize_ratio, 1.0 if location_label == "edge_low_res" else 1)
         if location_label == "edge_low_res":
             resize_ratio = min(resize_ratio, self.low_res_scale)
 
@@ -887,7 +793,7 @@ class LoadBalancerNode:
             )
 
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
-        jpeg_quality = 90 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 75
+        jpeg_quality = 80 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 65
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
             raise RuntimeError("failed to encode cloud payload")
