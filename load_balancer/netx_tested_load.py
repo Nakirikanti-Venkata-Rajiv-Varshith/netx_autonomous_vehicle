@@ -13,6 +13,7 @@ import threading
 import time
 from datetime import datetime
 from urllib.parse import urlparse
+from turbojpeg import TurboJPEG
 
 import cv2
 import numpy as np
@@ -55,6 +56,7 @@ class LoadBalancerNode:
     def __init__(self, name):
         rospy.loginfo("Load balancer node initializing...")
         rospy.init_node(name, anonymous=True)
+        self.jpeg = TurboJPEG()
         self.name = name
         self.image = None
         self.is_running = True
@@ -109,12 +111,12 @@ class LoadBalancerNode:
         self.edge_port = parsed_url.port or (443 if parsed_url.scheme == "https" else 80)
 
         self.edge_target_width = rospy.get_param("~edge_target_width", 640)
-        self.cloud_target_width = rospy.get_param("~cloud_target_width", 960)
-        self.cloud_target_height = rospy.get_param("~cloud_target_height", 1080)
+        self.cloud_target_width = rospy.get_param("~cloud_target_width", 640)
+        self.cloud_target_height = rospy.get_param("~cloud_target_height", 360)
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
+        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.75)
         self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.1)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
@@ -611,10 +613,11 @@ class LoadBalancerNode:
 
         if (
             latency_critical
-            and edge_score >= 0.80
+            and edge_score >= 0.75
+            and cloud_score >= 0.75
             and fresh_required
         ):
-            route = "onboard"
+            route = "dual_path"
 
         rospy.loginfo(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
@@ -803,10 +806,17 @@ class LoadBalancerNode:
             )
 
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
-        jpeg_quality = 80 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 65
-        ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-        if not ok:
-            raise RuntimeError("failed to encode cloud payload")
+        jpeg_quality = 60 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 45
+        # ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        # if not ok:
+        #     raise RuntimeError("failed to encode cloud payload")
+        try:
+            payload = self.jpeg.encode(
+            bgr,
+            quality=jpeg_quality
+            )
+        except Exception as e:
+            raise RuntimeError(f"TurboJPEG encode failed: {e}")
 
         headers = {
             "Content-Type": "application/octet-stream",
@@ -821,7 +831,7 @@ class LoadBalancerNode:
             "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
             "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
         }
-        return {"payload": buffer.tobytes(), "headers": headers}
+        return {"payload": payload, "headers": headers}
 
     def forward_to_onboard(self, app, ros_image, frame_override=None):
         try:
