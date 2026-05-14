@@ -45,3 +45,17 @@ source ~/ros_ws/devel/setup.bash
 roslaunch ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_load_balancer_main.launch
 
 # Done this is how we run this
+
+
+
+sometimes also need add permmisons of gropu
+
+sudo usermod -aG tty hiwonder
+sudo reboot
+
+then verify tat can u see this?
+
+cmd:- groups
+
+u should see 
+tty
