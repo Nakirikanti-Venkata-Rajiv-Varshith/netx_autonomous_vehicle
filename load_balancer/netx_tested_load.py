@@ -115,7 +115,7 @@ class LoadBalancerNode:
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
         self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
-        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.15)
+        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.08)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 5.0)
@@ -602,8 +602,12 @@ class LoadBalancerNode:
         if route == "offboard" and bandwidth_quality < 0.45:
             route = "lower_resolution"
 
-        if latency_critical and edge_score >= 0.85:
-            route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
+        if (
+            latency_critical
+            and edge_score >= 0.85
+            and fresh_required
+        ):
+            route = "onboard"
 
         rospy.loginfo(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
