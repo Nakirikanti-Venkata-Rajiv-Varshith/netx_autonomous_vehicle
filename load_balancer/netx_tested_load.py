@@ -657,7 +657,7 @@ class LoadBalancerNode:
                 # check network speed
                 if (
                     self.network_ok
-                    and upload_speed >= 7.0
+                    and upload_speed >= 3.0
                 ):
 
                     route = "offboard"
@@ -678,7 +678,7 @@ class LoadBalancerNode:
 
             if (
                 self.network_ok
-                and upload_speed >= 7.0
+                and upload_speed >= 3.0
                 and accuracy_priority == "high"
             ):
 
