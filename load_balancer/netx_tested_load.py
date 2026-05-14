@@ -114,11 +114,11 @@ class LoadBalancerNode:
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.6)
+        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
         self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.15)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
-        self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
+        self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 5.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
         self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.08)
         self.max_cloud_queue = rospy.get_param("~max_cloud_queue", 4)
@@ -575,12 +575,11 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.25) + (low_motion * 0.2) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.15))
+        edge_score = clamp((low_latency * 0.30) + (low_compute_load * 0.25) + (low_motion * 0.15) + (power_saving * 0.15))
+        cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.35) - (latency_penalty * 0.15) + (profile["scene_complexity"] * 0.25))
 
         if latency_critical:
-            edge_score = clamp(edge_score + 0.2)
-            cloud_score = clamp(cloud_score - 0.15)
+            edge_score = clamp(edge_score + 0.1)
 
         if power_mw and power_mw > self.power_budget_mw:
             cloud_score = clamp(cloud_score - 0.2)
@@ -603,7 +602,7 @@ class LoadBalancerNode:
         if route == "offboard" and bandwidth_quality < 0.45:
             route = "lower_resolution"
 
-        if latency_critical and edge_score >= 0.75:
+        if latency_critical and edge_score >= 0.85:
             route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
 
         rospy.loginfo(
