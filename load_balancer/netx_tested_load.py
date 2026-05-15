@@ -626,7 +626,7 @@ class LoadBalancerNode:
             route = "lower_resolution"
         else:
             # Normal network: choose based on accuracy need vs compute load
-            if high_accuracy_need >= 0.45 and self.network_ok and edge_available:
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
                 route = "offboard"
             else:
                 route = "onboard"
