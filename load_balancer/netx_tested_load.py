@@ -560,7 +560,7 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.15) + (power_saving * 0.2))
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.20) + (power_saving * 0.2))
         cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
         if latency_critical:
