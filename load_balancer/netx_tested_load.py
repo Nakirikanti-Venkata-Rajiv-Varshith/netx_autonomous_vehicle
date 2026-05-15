@@ -114,8 +114,8 @@ class LoadBalancerNode:
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.6)
-        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.15)
+        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.75)
+        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.10)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
@@ -329,27 +329,15 @@ class LoadBalancerNode:
     def bandwidth_callback(self, msg):
         data = list(msg.data)
         if len(data) >= 2:
-            alpha = 0.2
-            self.upload_speed = (
-                alpha * float(data[0])
-                + (1 - alpha) * self.upload_speed
-            )
-            gamma = 0.2
-            self.download_speed = (
-                gamma * float(data[1])
-                + (1 - gamma) * self.download_speed
-            )
+            self.upload_speed = float(data[0])
+            self.download_speed = float(data[1])
         if len(data) >= 4:
             self.rtt_ms = None if data[2] < 0 else float(data[2])
             self.jitter_ms = float(data[3])
         if len(data) >= 5:
             self.network_ok = bool(round(data[4]))
         else:
-            # self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
-            self.network_ok = (
-                self.rtt_ms is not None
-                and self.rtt_ms < 300
-            )
+            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
@@ -365,8 +353,8 @@ class LoadBalancerNode:
         self.frame_timing[frame_uuid] = {"t_capture": capture_time}
         self.start_pub.publish(capture_time)
 
-        if len(self.frame_timing) > 120:
-            oldest = sorted(self.frame_timing.keys())[:60]
+        if len(self.frame_timing) > 500:
+            oldest = sorted(self.frame_timing.keys())[:250]
             for key in oldest:
                 self.frame_timing.pop(key, None)
 
@@ -553,14 +541,9 @@ class LoadBalancerNode:
 
         rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
         jitter_penalty = clamp(self.jitter_ms / 80.0)
-
-
-         #### WE ARE CLAMPING THE DATA SO WE ARE MOSTLY GETTING ZERO mbps
-        # bandwidth_quality = clamp(
-        #     min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
-        # )
-
-        bandwidth_quality = 1.0 if self.network_ok else 0.0
+        bandwidth_quality = clamp(
+            min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
+        )
         low_latency = clamp(1.0 - ((rtt_penalty * 0.65) + (jitter_penalty * 0.2) + (queue_depth * 0.15)))
         low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
         low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
@@ -781,7 +764,7 @@ class LoadBalancerNode:
         target_height = self.cloud_target_height
 
         resize_ratio = min(float(target_width) / cropped_frame.shape[1], float(target_height) / cropped_frame.shape[0])
-        resize_ratio = min(resize_ratio, 1.0 if location_label == "edge_low_res" else 1)
+        resize_ratio = min(resize_ratio, 0.80 if location_label == "edge_low_res" else 1.0)
         if location_label == "edge_low_res":
             resize_ratio = min(resize_ratio, self.low_res_scale)
 
@@ -793,7 +776,7 @@ class LoadBalancerNode:
             )
 
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
-        jpeg_quality = 80 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 65
+        jpeg_quality = 75 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 60
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
             raise RuntimeError("failed to encode cloud payload")
