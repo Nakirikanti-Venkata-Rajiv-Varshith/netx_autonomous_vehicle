@@ -107,7 +107,7 @@
         <param name="edge_timeout" value="2.0" />
         <param name="cloud_delay_threshold" value="0.75" />
 
-        <param name="dual_path_threshold" value="0.75" />
+        <param name="dual_path_threshold" value="0.80" />
         <param name="dual_path_margin" value="0.1" />
 
         <param name="power_budget_mw" value="3200" />

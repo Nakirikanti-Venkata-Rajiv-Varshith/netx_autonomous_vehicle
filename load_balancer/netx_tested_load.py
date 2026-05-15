@@ -114,7 +114,7 @@ class LoadBalancerNode:
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.75)
+        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
         self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.10)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
@@ -560,8 +560,8 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (high_motion * 0.20) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.45) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.30))
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.15) + (power_saving * 0.2))
+        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
@@ -588,7 +588,7 @@ class LoadBalancerNode:
         if route == "offboard" and bandwidth_quality < 0.45:
             route = "lower_resolution"
 
-        if latency_critical and edge_score >= 0.75:
+        if latency_critical and edge_score >= 0.85:
             route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
 
         rospy.loginfo(
