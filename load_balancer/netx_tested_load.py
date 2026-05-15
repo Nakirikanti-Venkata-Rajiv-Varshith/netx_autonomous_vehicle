@@ -53,7 +53,7 @@ def clamp(value, minimum=0.0, maximum=1.0):
 
 class LoadBalancerNode:
     def __init__(self, name):
-        rospy.loginfo("Load balancer node initializing...")
+        rospy.logdebug("Load balancer node initializing...")
         rospy.init_node(name, anonymous=True)
         self.name = name
         self.image = None
@@ -65,7 +65,11 @@ class LoadBalancerNode:
         self.frame_timing = {}
         self.frame_id = 0
         self.last_processing_time = 0.0
-
+        self.profile_skip_counter = 0
+        self.profile_skip_interval = rospy.get_param("~profile_skip_interval", 3)  # Profile every 3rd frame
+        self.cached_edge_density = 0.0
+        self.cached_texture_density = 0.0
+        self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
         self.rtt_ms = None
@@ -93,7 +97,7 @@ class LoadBalancerNode:
 
         self.lane_img_pub = rospy.Publisher("/load_balancer/lane_image", Image, queue_size=1)
         self.yolo_img_pub = rospy.Publisher("/load_balancer/yolo_image", Image, queue_size=1)
-        self.yolo_traffic = rospy.Publisher("/load_balancer/yolo/traffic_image", Image, queue_size=3)
+        self.yolo_traffic = rospy.Publisher("/load_balancer/yolo/traffic_image", Image, queue_size=2)
         self.yolo_obj = rospy.Publisher("/load_balancer/yolo/object_image", Image, queue_size=3)
         self.binary_img_pub = rospy.Publisher("/load_balancer/lane_binary_image", Image, queue_size=1)
         self.result_img_pub = rospy.Publisher("/load_balancer/lane_result_image", Image, queue_size=1)
@@ -114,14 +118,12 @@ class LoadBalancerNode:
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.dual_path_threshold = rospy.get_param("~dual_path_threshold", 0.80)
-        self.dual_path_margin = rospy.get_param("~dual_path_margin", 0.10)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
         self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.08)
-        self.max_cloud_queue = rospy.get_param("~max_cloud_queue", 4)
+        self.max_cloud_queue = rospy.get_param("~max_cloud_queue", 2)
         self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
 
         self.applications = rospy.get_param("~applications")
@@ -152,6 +154,9 @@ class LoadBalancerNode:
             "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "fused"},
             "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "fused"},
         }
+        
+        # Optimize: Cache ROI to avoid repeated min/max computations
+        self._roi_cache = {"app": None, "roi": None, "timestamp": 0.0}
 
         self.cloud_queue = queue.Queue(maxsize=self.max_cloud_queue)
         self.cloud_inflight = 0
@@ -188,7 +193,7 @@ class LoadBalancerNode:
                 "e2e_latency_sec",
             ]
         )
-        rospy.loginfo("CSV logging: %s", self.csv_path)
+        rospy.logdebug("CSV logging: %s", self.csv_path)
 
         rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
         rospy.Subscriber(
@@ -209,7 +214,7 @@ class LoadBalancerNode:
 
         self.wait_for_services()
         self.initialize_servos()
-        rospy.loginfo("LoadBalancerNode initialized.")
+        rospy.logdebug("LoadBalancerNode initialized.")
         rospy.spin()
 
     def _poll_tegrastats(self):
@@ -299,7 +304,7 @@ class LoadBalancerNode:
 
     def shutdown(self, signum, frame):
         self.is_running = False
-        rospy.loginfo("Shutting down LoadBalancerNode...")
+        rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
             self.csv_file.close()
         except Exception:
@@ -404,11 +409,12 @@ class LoadBalancerNode:
                 onboard_dispatched = False
                 cloud_dispatched = False
 
-                if decision["route"] in ("onboard", "dual_path"):
+                # Route decision: onboard, offboard (full res), or lower_resolution
+                if decision["route"] == "onboard":
                     self.forward_to_onboard(app, ros_image, frame_override=frame)
                     onboard_dispatched = True
 
-                if decision["route"] in ("offboard", "lower_resolution", "dual_path"):
+                elif decision["route"] in ("offboard", "lower_resolution"):
                     cloud_frame = frame
                     location_label = "edge"
                     if decision["route"] == "lower_resolution":
@@ -447,6 +453,7 @@ class LoadBalancerNode:
                     )
 
                 if not onboard_dispatched and not cloud_dispatched:
+                    # Fallback: route to onboard if neither path succeeded
                     self.forward_to_onboard(app, ros_image, frame_override=frame)
                     self.log_row(
                         frame_uuid,
@@ -467,36 +474,69 @@ class LoadBalancerNode:
 
     def profile_frame(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        flow_gray = cv2.resize(gray, (160, 90))
         embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
 
         motion_score = 0.0
-        if self.scene_gray is not None:
+        # Only compute expensive optical flow every N frames to save 30-50% CPU
+        if self.scene_gray is not None and self.profile_skip_counter == 0:
+            # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
+            flow_gray = cv2.resize(gray, (80, 45))
             flow = cv2.calcOpticalFlowFarneback(
                 self.scene_gray,
                 flow_gray,
                 None,
                 0.5,
-                3,
-                15,
-                3,
+                2,  # Reduced from 3 levels
+                10,  # Reduced from 15 window size
+                2,  # Reduced from 3 iterations
                 5,
                 1.2,
                 0,
             )
             magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             motion_score = float(np.mean(magnitude))
+        elif self.scene_embedding is not None:
+            # Use embedding delta as lightweight motion proxy on non-profile frames
+            motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
 
-        edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
-        texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
-        scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
+        # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
+        # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
+        if self.profile_skip_counter == 0:
+            edge_density = float(
+                np.count_nonzero(cv2.Canny(gray, 60, 160))
+            ) / float(gray.size)
+
+            texture_density = float(
+                cv2.Laplacian(gray, cv2.CV_32F).var()
+            )
+
+            scene_complexity = clamp(
+                edge_density * 2.5 + texture_density / 2500.0
+            )
+
+            # cache results
+            self.cached_edge_density = edge_density
+            self.cached_texture_density = texture_density
+            self.cached_scene_complexity = scene_complexity
+
+        else:
+            # reuse cached values
+            edge_density = self.cached_edge_density
+            texture_density = self.cached_texture_density
+            scene_complexity = self.cached_scene_complexity
 
         change_score = 0.0
         if self.scene_embedding is not None:
             change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
 
-        self.scene_gray = flow_gray
+        # Update scene reference only every N frames to reduce bandwidth
+        if self.profile_skip_counter == 0:
+            self.scene_gray = cv2.resize(gray, (80, 45))
+        
         self.scene_embedding = embedding
+        self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
+        
         self.scene_profile = {
             "motion_score": round(motion_score, 4),
             "scene_complexity": round(scene_complexity, 4),
@@ -525,7 +565,7 @@ class LoadBalancerNode:
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
         if not self.network_ok or not edge_available:
-            rospy.loginfo("[DECISION] network unavailable, forcing onboard")
+            rospy.logdebug("[DECISION] network unavailable, forcing onboard")
             return {
                 "route": "onboard",
                 "edge_score": 1.0,
@@ -560,12 +600,12 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.20) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
+        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.45) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
-            cloud_score = clamp(cloud_score - 0.15)
+            # cloud_score = clamp(cloud_score - 0.15)
 
         if power_mw and power_mw > self.power_budget_mw:
             cloud_score = clamp(cloud_score + 0.2)
@@ -577,21 +617,21 @@ class LoadBalancerNode:
             and profile["motion_score"] < 0.5
         )
 
-        if edge_score >= self.dual_path_threshold and cloud_score >= self.dual_path_threshold:
-            if abs(edge_score - cloud_score) <= self.dual_path_margin or fresh_required:
-                route = "dual_path"
-            else:
-                route = "onboard" if edge_score >= cloud_score else "offboard"
-        else:
-            route = "onboard" if edge_score >= cloud_score else "offboard"
-
-        if route == "offboard" and bandwidth_quality < 0.45:
+        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
+        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.45:
+            # Poor network: reduce resolution instead of offloading full res
             route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.45 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
 
-        if latency_critical and edge_score >= 0.85:
-            route = "dual_path" if route in ("offboard", "lower_resolution") and fresh_required else "onboard"
-
-        rospy.loginfo(
+        rospy.logdebug(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
             app,
             edge_score,
@@ -711,7 +751,8 @@ class LoadBalancerNode:
                     e2e,
                 ]
             )
-            self.csv_file.flush()
+            if self.frame_id % 30 == 0:
+                self.csv_file.flush()
         except Exception as exc:
             rospy.logerr(f"Failed to write CSV row: {exc}")
 
@@ -731,7 +772,14 @@ class LoadBalancerNode:
         scores=None,
     ):
         try:
-            dispatch = self.prepare_cloud_payload(frame, app, location_label)
+            # Optimize: Downscale frame BEFORE queueing to prevent memory spikes
+            # Large numpy arrays sitting in queue cause GC pressure, stale refs, memory bandwidth waste
+            target_width = self.cloud_target_width
+            frame_to_queue = frame
+            if frame.shape[1] > target_width:
+                scale = float(target_width) / float(frame.shape[1])
+                frame_to_queue = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
+            
             request_meta = {
                 "app": app,
                 "frame_uuid": frame_uuid,
@@ -744,8 +792,9 @@ class LoadBalancerNode:
                 "location_label": location_label,
                 "profile": profile or dict(self.scene_profile),
                 "scores": scores or {},
-                "headers": dispatch["headers"],
-                "payload": dispatch["payload"],
+                "frame": frame_to_queue,  # Pre-downscaled to reduce memory pressure
+                "headers": None,
+                "payload": None,
             }
 
             if self.cloud_queue.full():
@@ -798,6 +847,62 @@ class LoadBalancerNode:
         }
         return {"payload": buffer.tobytes(), "headers": headers}
 
+    def _prepare_cloud_payload_optimized(self, frame, app, location_label):
+        """Optimize: Frame pre-downscaled, only ROI extraction and encoding needed"""
+        roi = self._get_cached_roi(app, frame.shape[1], frame.shape[0])
+        cropped_frame = frame
+        if roi and not self.cloud_roi_headers_only:
+            cropped_frame = self.safe_crop_roi(frame, roi)
+        
+        # Frame already at target size from forward_to_edge downscaling
+        resized = cropped_frame
+
+        bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
+        
+        # Optimize: Reduce JPEG quality more aggressively for high RTT/jitter
+        min_bandwidth = min(self.upload_speed, self.download_speed)
+        rtt_penalty = (self.rtt_ms or 120.0) / 150.0
+        
+        if min_bandwidth >= self.bandwidth_high_threshold:
+            jpeg_quality = 75
+        elif min_bandwidth >= self.bandwidth_low_threshold:
+            jpeg_quality = 65
+        else:
+            # High latency or low bandwidth: use lower quality
+            jpeg_quality = 50 if rtt_penalty > 0.7 else 55
+        
+        ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        if not ok:
+            raise RuntimeError("failed to encode cloud payload")
+
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Frame-Width": str(bgr.shape[1]),
+            "Frame-Height": str(bgr.shape[0]),
+            "Client-Timestamp": str(time.time()),
+            "detection-flag": app,
+            "Cloud-Transport": "jpeg",
+            "Cloud-Route": location_label,
+            "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
+            "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
+            "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
+            "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
+        }
+        return {"payload": buffer.tobytes(), "headers": headers}
+    
+    def _get_cached_roi(self, app, width, height):
+        """Optimize: Cache ROI extraction to avoid repeated min/max computations"""
+        now = time.time()
+        # Invalidate cache after 0.1s to allow dynamic updates
+        if self._roi_cache["app"] == app and (now - self._roi_cache["timestamp"]) < 0.1:
+            return self._roi_cache["roi"]
+        
+        roi = self.extract_cloud_roi(app, width, height)
+        self._roi_cache["app"] = app
+        self._roi_cache["roi"] = roi
+        self._roi_cache["timestamp"] = now
+        return roi
+
     def forward_to_onboard(self, app, ros_image, frame_override=None):
         try:
             frame_rgb = frame_override if frame_override is not None else self.image
@@ -821,7 +926,7 @@ class LoadBalancerNode:
                 rospy.logwarn_throttle(5.0, f"Unknown app '{app}', no onboard topic.")
                 return
 
-            rospy.loginfo(f"Forwarded {app} to onboard")
+            rospy.logdebug(f"Forwarded {app} to onboard")
         except Exception as exc:
             rospy.logerr(f"Error forwarding to onboard {app}: {exc}")
 
@@ -858,6 +963,16 @@ class LoadBalancerNode:
                 self.cloud_inflight += 1
 
             try:
+                # Optimize: Prepare payload here in worker thread instead of main thread
+                dispatch = self._prepare_cloud_payload_optimized(
+                    request_meta["frame"],
+                    request_meta["app"],
+                    request_meta["location_label"]
+                )
+                request_meta["headers"] = dispatch["headers"]
+                request_meta["payload"] = dispatch["payload"]
+                request_meta["frame"] = None  # Release frame data
+                
                 response = self.session.post(
                     self.server_url,
                     data=request_meta["payload"],
@@ -866,7 +981,7 @@ class LoadBalancerNode:
                 )
                 if response.status_code == 200:
                     self.process_edge_response(response, request_meta["app"], request_meta)
-                    rospy.loginfo("Cloud response received for %s", request_meta["app"])
+                    rospy.logdebug("Cloud response received for %s", request_meta["app"])
                 else:
                     rospy.logwarn(
                         "Edge server returned %s for %s", response.status_code, request_meta["app"]
