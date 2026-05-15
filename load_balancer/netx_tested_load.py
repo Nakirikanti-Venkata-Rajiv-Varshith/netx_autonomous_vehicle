@@ -52,9 +52,43 @@ def clamp(value, minimum=0.0, maximum=1.0):
 
 
 class LoadBalancerNode:
+
+    def init_cuda(self):
+
+        self.cuda_enabled = (
+            cv2.cuda.getCudaEnabledDeviceCount() > 0
+        )
+
+        if not self.cuda_enabled:
+            rospy.logwarn("CUDA unavailable")
+            return
+
+        rospy.loginfo("CUDA acceleration enabled")
+
+        self.gpu_frame = cv2.cuda_GpuMat()
+
+        self.cuda_canny = cv2.cuda.createCannyEdgeDetector(
+            60,
+            160
+        )
+
+        self.cuda_farneback = (
+            cv2.cuda_FarnebackOpticalFlow.create(
+                5,
+                0.5,
+                False,
+                10,
+                2,
+                5,
+                1.1,
+                0
+            )
+        )
+
     def __init__(self, name):
         rospy.logdebug("Load balancer node initializing...")
         rospy.init_node(name, anonymous=True)
+        self.init_cuda()
         self.name = name
         self.image = None
         self.is_running = True
@@ -132,6 +166,8 @@ class LoadBalancerNode:
         self.edge_check_interval = rospy.get_param("~edge_check_interval", 2.0)
 
         self.scene_gray = None
+        self.scene_gray_cpu = None
+        self.scene_gray_gpu = None
         self.scene_embedding = None
         self.scene_profile = {"motion_score": 0.0, "scene_complexity": 0.0, "change_score": 0.0}
 
@@ -472,17 +508,17 @@ class LoadBalancerNode:
         except Exception as exc:
             rospy.logerr(f"Error in handle_frame: {exc}")
 
-    def profile_frame(self, frame):
+    def profile_frame_cpu(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
         embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
 
         motion_score = 0.0
         # Only compute expensive optical flow every N frames to save 30-50% CPU
-        if self.scene_gray is not None and self.profile_skip_counter == 0:
+        if self.scene_gray_cpu is not None and self.profile_skip_counter == 0:
             # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
             flow_gray = cv2.resize(gray, (80, 45))
             flow = cv2.calcOpticalFlowFarneback(
-                self.scene_gray,
+                self.scene_gray_cpu,
                 flow_gray,
                 None,
                 0.5,
@@ -532,7 +568,7 @@ class LoadBalancerNode:
 
         # Update scene reference only every N frames to reduce bandwidth
         if self.profile_skip_counter == 0:
-            self.scene_gray = cv2.resize(gray, (80, 45))
+            self.scene_gray_cpu = cv2.resize(gray, (80, 45))
         
         self.scene_embedding = embedding
         self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
@@ -543,6 +579,178 @@ class LoadBalancerNode:
             "change_score": round(change_score, 4),
         }
         return self.scene_profile
+    
+    def profile_frame(self, frame):
+
+        if not self.cuda_enabled:
+            return self.profile_frame_cpu(frame)
+
+        try:
+
+            self.gpu_frame.upload(frame)
+
+            # RGB -> Gray
+            gpu_gray = cv2.cuda.cvtColor(
+                self.gpu_frame,
+                cv2.COLOR_RGB2GRAY
+            )
+
+            # Small embedding
+            gpu_embedding = cv2.cuda.resize(
+                gpu_gray,
+                (16, 16)
+            )
+
+            embedding = (
+                gpu_embedding.download()
+                .astype(np.float32) / 255.0
+            )
+
+            motion_score = 0.0
+
+            # Optical Flow
+            if (
+                self.scene_gray_gpu is not None
+                and self.profile_skip_counter == 0
+            ):
+
+                gpu_flow_gray = cv2.cuda.resize(
+                    gpu_gray,
+                    (80, 45)
+                )
+
+                gpu_flow = self.cuda_farneback.calc(
+                    self.scene_gray_gpu,
+                    gpu_flow_gray,
+                    None
+                )
+
+                flow = gpu_flow.download()
+
+                magnitude, _ = cv2.cartToPolar(
+                    flow[..., 0],
+                    flow[..., 1]
+                )
+
+                motion_score = float(
+                    np.mean(magnitude)
+                )
+
+            elif self.scene_embedding is not None:
+
+                motion_score = float(
+                    np.mean(
+                        np.abs(
+                            embedding -
+                            self.scene_embedding
+                        )
+                    )
+                ) * 2.0
+
+            # Complexity
+            if self.profile_skip_counter == 0:
+
+                gpu_edges = self.cuda_canny.detect(
+                    gpu_gray
+                )
+
+                edges = gpu_edges.download()
+
+                edge_density = (
+                    float(np.count_nonzero(edges))
+                    / float(edges.size)
+                )
+
+                small_gray_gpu = cv2.cuda.resize(
+                    gpu_gray,
+                    (160, 90)
+                )
+                gray_cpu = small_gray_gpu.download()
+
+                texture_density = float(
+                    cv2.Laplacian(
+                        gray_cpu,
+                        cv2.CV_32F
+                    ).var()
+                )
+
+                scene_complexity = clamp(
+                    edge_density * 2.5 +
+                    texture_density / 2500.0
+                )
+
+                self.cached_edge_density = edge_density
+                self.cached_texture_density = texture_density
+                self.cached_scene_complexity = (
+                    scene_complexity
+                )
+
+            else:
+
+                edge_density = (
+                    self.cached_edge_density
+                )
+
+                texture_density = (
+                    self.cached_texture_density
+                )
+
+                scene_complexity = (
+                    self.cached_scene_complexity
+                )
+
+            # Scene Change
+            change_score = 0.0
+
+            if self.scene_embedding is not None:
+
+                change_score = float(
+                    np.mean(
+                        np.abs(
+                            embedding -
+                            self.scene_embedding
+                        )
+                    )
+                )
+
+            # Store reduced frame
+            if self.profile_skip_counter == 0:
+
+                self.scene_gray_gpu = cv2.cuda.resize(
+                    gpu_gray,
+                    (80, 45)
+                )
+
+            self.scene_embedding = embedding
+
+            self.profile_skip_counter = (
+                self.profile_skip_counter + 1
+            ) % self.profile_skip_interval
+
+            self.scene_profile = {
+                "motion_score": round(
+                    motion_score,
+                    4
+                ),
+                "scene_complexity": round(
+                    scene_complexity,
+                    4
+                ),
+                "change_score": round(
+                    change_score,
+                    4
+                ),
+            }
+
+            return self.scene_profile
+
+        except Exception as e:
+
+            rospy.logwarn(
+                f"CUDA profile failed: {e}"
+            )
+
+            return self.profile_frame_cpu(frame)
 
     def decide_processing_location(
         self,
