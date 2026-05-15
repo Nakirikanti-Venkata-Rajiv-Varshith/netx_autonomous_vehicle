@@ -541,12 +541,14 @@ class LoadBalancerNode:
 
         rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
         jitter_penalty = clamp(self.jitter_ms / 80.0)
-        bandwidth_quality = clamp(
-            min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
-        )
+        # bandwidth_quality = clamp(
+        #     min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
+        # )
+        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.5+ (1.0 - jitter_penalty) * 0.3+ (1.0 - queue_depth) * 0.2)
         low_latency = clamp(1.0 - ((rtt_penalty * 0.65) + (jitter_penalty * 0.2) + (queue_depth * 0.15)))
         low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
         low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
+        high_motion = clamp(1 - low_motion)
         power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
 
         accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
@@ -558,15 +560,15 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.2) + (power_saving * 0.1))
-        cloud_score = clamp((high_accuracy_need * 0.45) + (bandwidth_quality * 0.45) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.30))
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (high_motion * 0.20) + (power_saving * 0.2))
+        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.45) - (latency_penalty * 0.25) + (profile["scene_complexity"] * 0.30))
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
             cloud_score = clamp(cloud_score - 0.15)
 
         if power_mw and power_mw > self.power_budget_mw:
-            cloud_score = clamp(cloud_score - 0.2)
+            cloud_score = clamp(cloud_score + 0.2)
 
         publish_cached = (
             not fresh_required
