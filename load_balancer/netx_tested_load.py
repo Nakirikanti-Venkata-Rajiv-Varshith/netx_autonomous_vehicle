@@ -584,8 +584,7 @@ class LoadBalancerNode:
         cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
         gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
         ram_norm = clamp((ram_usage or 0.0) / 100.0)
-        queue_depth = clamp(float(self.get_cloud_queue_depth()) / float(max(self.max_cloud_queue, 1)))
-
+        queue_depth = clamp(float(self.get_cloud_queue_depth()))
         rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
         jitter_penalty = clamp(self.jitter_ms / 80.0)
         # bandwidth_quality = clamp(
@@ -961,7 +960,7 @@ class LoadBalancerNode:
     def _cloud_worker(self):
         # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
         while self.is_running:
-            time.sleep(0.01)  # Small sleep to avoid busy-wait
+            time.sleep(0.001)  # Small sleep to avoid busy-wait
             
             # Get the latest request (if any)
             with self.cloud_lock:
@@ -969,7 +968,7 @@ class LoadBalancerNode:
                 self.latest_cloud_request = None
                 if request_meta is None:
                     continue
-                self.cloud_inflight += 1
+                self.cloud_inflight = 0
 
             try:
                 # Optimize: Prepare payload here in worker thread instead of main thread
