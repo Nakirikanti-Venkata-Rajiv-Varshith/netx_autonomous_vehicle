@@ -3,6 +3,7 @@
 import base64
 import collections
 import csv
+import gc
 import json
 import os
 import queue
@@ -54,6 +55,8 @@ def clamp(value, minimum=0.0, maximum=1.0):
 class LoadBalancerNode:
     def __init__(self, name):
         rospy.logdebug("Load balancer node initializing...")
+        # FIX #2: Disable Python GC to avoid random P90 spikes from garbage collection
+        gc.disable()
         rospy.init_node(name, anonymous=True)
         self.name = name
         self.image = None
@@ -116,14 +119,14 @@ class LoadBalancerNode:
         self.cloud_target_width = rospy.get_param("~cloud_target_width", 960)
         self.cloud_target_height = rospy.get_param("~cloud_target_height", 1080)
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
-        self.edge_timeout = rospy.get_param("~edge_timeout", 2.0)
+        # FIX #5: Reduce network timeout from 2.0s to avoid P90 spikes from slow retries
+        self.edge_timeout = rospy.get_param("~edge_timeout", 0.5)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
         self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.08)
-        self.max_cloud_queue = rospy.get_param("~max_cloud_queue", 2)
         self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
 
         self.applications = rospy.get_param("~applications")
@@ -158,7 +161,6 @@ class LoadBalancerNode:
         # Optimize: Cache ROI to avoid repeated min/max computations
         self._roi_cache = {"app": None, "roi": None, "timestamp": 0.0}
 
-        self.cloud_queue = queue.Queue(maxsize=self.max_cloud_queue)
         self.cloud_inflight = 0
         self.cloud_lock = threading.Lock()
         threading.Thread(target=self._cloud_worker, daemon=True).start()
@@ -194,6 +196,8 @@ class LoadBalancerNode:
             ]
         )
         rospy.logdebug("CSV logging: %s", self.csv_path)
+        # FIX #1: Replace queue with latest-frame strategy
+        self.latest_cloud_request = None
 
         rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
         rospy.Subscriber(
@@ -351,6 +355,9 @@ class LoadBalancerNode:
         self.last_processing_time = now
 
         self.frame_id += 1
+        # FIX #3: Manually trigger garbage collection every 100 frames to control P90 latency
+        if self.frame_id % 100 == 0:
+            gc.collect()
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
         if capture_time <= 0:
             capture_time = now
@@ -601,7 +608,7 @@ class LoadBalancerNode:
         latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
 
         edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.45) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
+        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
@@ -621,7 +628,7 @@ class LoadBalancerNode:
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
         if latency_critical and edge_score >= cloud_score:
             route = "onboard"
-        elif bandwidth_quality < 0.45:
+        elif bandwidth_quality < 0.35:
             # Poor network: reduce resolution instead of offloading full res
             route = "lower_resolution"
         else:
@@ -751,7 +758,8 @@ class LoadBalancerNode:
                     e2e,
                 ]
             )
-            if self.frame_id % 30 == 0:
+            # FIX #4: Reduce CSV flush frequency from 30 to 300 frames to avoid filesystem IO blocking
+            if self.frame_id % 300 == 0:
                 self.csv_file.flush()
         except Exception as exc:
             rospy.logerr(f"Failed to write CSV row: {exc}")
@@ -772,13 +780,13 @@ class LoadBalancerNode:
         scores=None,
     ):
         try:
-            # Optimize: Downscale frame BEFORE queueing to prevent memory spikes
-            # Large numpy arrays sitting in queue cause GC pressure, stale refs, memory bandwidth waste
+            # Optimize: Downscale frame BEFORE storing to prevent memory spikes
+            # Large numpy arrays cause GC pressure, stale refs, memory bandwidth waste
             target_width = self.cloud_target_width
-            frame_to_queue = frame
+            frame_to_send = frame
             if frame.shape[1] > target_width:
                 scale = float(target_width) / float(frame.shape[1])
-                frame_to_queue = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
+                frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
             
             request_meta = {
                 "app": app,
@@ -792,18 +800,16 @@ class LoadBalancerNode:
                 "location_label": location_label,
                 "profile": profile or dict(self.scene_profile),
                 "scores": scores or {},
-                "frame": frame_to_queue,  # Pre-downscaled to reduce memory pressure
+                "frame": frame_to_send,  # Pre-downscaled to reduce memory pressure
                 "headers": None,
                 "payload": None,
             }
 
-            if self.cloud_queue.full():
-                dropped = self.cloud_queue.get_nowait()
-                rospy.logwarn("Cloud queue full, dropping oldest %s request", dropped["app"])
-
-            self.cloud_queue.put_nowait(request_meta)
+            # FIX #1: Replace queue with latest-frame strategy (standard realtime robotics approach)
+            with self.cloud_lock:
+                self.latest_cloud_request = request_meta
         except Exception as exc:
-            rospy.logwarn(f"Failed to queue cloud request for {app}: {exc}")
+            rospy.logwarn(f"Failed to store cloud request for {app}: {exc}")
             self.publish_edge_fallback(app)
 
     def prepare_cloud_payload(self, frame, app, location_label):
@@ -953,13 +959,16 @@ class LoadBalancerNode:
         return msg
 
     def _cloud_worker(self):
-        while self.is_running or not self.cloud_queue.empty():
-            try:
-                request_meta = self.cloud_queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
-
+        # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
+        while self.is_running:
+            time.sleep(0.01)  # Small sleep to avoid busy-wait
+            
+            # Get the latest request (if any)
             with self.cloud_lock:
+                request_meta = self.latest_cloud_request
+                self.latest_cloud_request = None
+                if request_meta is None:
+                    continue
                 self.cloud_inflight += 1
 
             try:
@@ -1009,7 +1018,6 @@ class LoadBalancerNode:
                     profile=request_meta["profile"],
                     scores=request_meta["scores"],
                 )
-                self.cloud_queue.task_done()
 
     def process_edge_response(self, response, app, request_meta=None):
         try:
@@ -1310,7 +1318,8 @@ class LoadBalancerNode:
 
     def get_cloud_queue_depth(self):
         with self.cloud_lock:
-            return self.cloud_inflight + self.cloud_queue.qsize()
+            # FIX #1: Now only tracking inflight requests, no queue buffering (latest-frame strategy)
+            return self.cloud_inflight
 
     def find_best_match(self, detection, candidates):
         best = None
