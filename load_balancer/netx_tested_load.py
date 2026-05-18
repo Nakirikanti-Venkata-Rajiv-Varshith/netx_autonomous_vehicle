@@ -487,7 +487,7 @@ class LoadBalancerNode:
         # Only compute expensive optical flow every N frames to save 30-50% CPU
         if self.scene_gray is not None and self.profile_skip_counter == 0:
             # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
-            flow_gray = cv2.resize(gray, (64, 36))
+            flow_gray = cv2.resize(gray, (80, 45))
             flow = cv2.calcOpticalFlowFarneback(
                 self.scene_gray,
                 flow_gray,
