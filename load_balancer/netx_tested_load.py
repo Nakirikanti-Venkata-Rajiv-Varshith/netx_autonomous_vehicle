@@ -653,9 +653,11 @@ class LoadBalancerNode:
         edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
         cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
+        # Small latency nudge — was +0.2 which made edge_score always win and forced
+        # everything onboard regardless of CPU load. Reduced to +0.05 so the
+        # compute_saturated override below can actually fire.
         if latency_critical:
-            edge_score = clamp(edge_score + 0.2)
-            # cloud_score = clamp(cloud_score - 0.15)
+            edge_score = clamp(edge_score + 0.05)
 
         if power_mw and power_mw > self.power_budget_mw:
             cloud_score = clamp(cloud_score + 0.2)
@@ -667,19 +669,36 @@ class LoadBalancerNode:
             and profile["motion_score"] < 0.5
         )
 
-        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        if latency_critical and edge_score >= cloud_score:
+        # Detect local compute saturation.
+        # Use 75% of the configured threshold so offloading kicks in before things
+        # are completely saturated (e.g. threshold=80 → offload above 60% CPU).
+        cpu_overloaded = (cpu_usage or 0.0) > (self.resource_threshold * 0.75)
+        ram_overloaded = (ram_usage or 0.0) > (self.resource_threshold * 0.90)
+        compute_saturated = cpu_overloaded or ram_overloaded
+
+        # Routing decision — priority order:
+        #   1. Compute saturated → must offload (overrides latency preference)
+        #   2. Latency critical AND strongly prefer onboard (margin > 0.15) → stay onboard
+        #   3. Poor network → lower resolution offload
+        #   4. Accuracy need + good network → offboard
+        #   5. Default → onboard
+        if compute_saturated:
+            # CPU/RAM is overloaded — offload regardless of latency sensitivity.
+            # Root cause fix: without this, 70-80% CPU never triggered offloading.
+            if bandwidth_quality < 0.25 or not self.network_ok or not edge_available:
+                route = "lower_resolution"
+            else:
+                route = "offboard"
+        elif latency_critical and edge_score > cloud_score + 0.15:
+            # Latency critical AND onboard is clearly better — stay onboard.
+            # Margin guard prevents the old behaviour where any score tie forced onboard.
             route = "onboard"
         elif bandwidth_quality < 0.35:
-            # Poor network: reduce resolution instead of offloading full res
             route = "lower_resolution"
+        elif high_accuracy_need >= 0.50 and self.network_ok and edge_available:
+            route = "offboard"
         else:
-            # Normal network: choose based on accuracy need vs compute load
-            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-                route = "offboard"
-            else:
-                route = "onboard"
+            route = "onboard"
 
         rospy.logdebug(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
