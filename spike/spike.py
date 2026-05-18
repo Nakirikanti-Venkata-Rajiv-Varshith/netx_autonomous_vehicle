@@ -47,7 +47,7 @@ class ResourceStressor:
         
         def cpu_worker_controlled():
             """Controlled CPU worker with adjustable utilization"""
-            period = 0.03  # 100ms period
+            period = 0.005  # 100ms period
             busy_time = period * (target_utilization / 100.0)
             idle_time = period - busy_time
             
@@ -70,7 +70,7 @@ class ResourceStressor:
                 
                 # Sleep for remaining time
                 if idle_time > 0:
-                    time.sleep(idle_time)
+                    time.sleep(idle_time*0.2)
         
         # Create multiple processes
         num_cores = multiprocessing.cpu_count()
@@ -104,11 +104,11 @@ class ResourceStressor:
         target_memory = int(available_memory * (target_utilization / 100.0))
         
         # Be more conservative to avoid OOM
-        target_memory = int(target_memory * 0.92)  # Use 80% of target
+        target_memory = int(target_memory * 0.97)  # Use 80% of target
         
         print(f"Target memory: {target_memory / (1024**3):.2f} GB")
         
-        chunk_size = 120 * 1024 * 1024  # Smaller 50MB chunks
+        chunk_size = 200 * 1024 * 1024  # Smaller 50MB chunks
         allocated = 0
         
         try:
@@ -184,7 +184,7 @@ class ResourceStressor:
             """
             
             # Use smaller arrays to avoid timeouts
-            array_size = 5000000
+            array_size = 15000000
             block_size = 256
             grid_size = (array_size + block_size - 1) // block_size
             
@@ -204,14 +204,15 @@ class ResourceStressor:
             while time.time() < end_time and not self.stop_event.is_set():
                 try:
                     # Use smaller iterations to prevent timeout
-                    iterations = 60
+                    iterations = 600
                     
                     # Launch kernel
                     kernel(input_gpu, np.int32(array_size), np.int32(iterations),
                           block=(block_size, 1, 1), grid=(grid_size, 1))
                     
                     # Synchronize
-                    cuda.Context.synchronize()
+                    if iteration % 10 == 0:
+                        cuda.Context.synchronize()
                     
                     iteration += 1
                     
