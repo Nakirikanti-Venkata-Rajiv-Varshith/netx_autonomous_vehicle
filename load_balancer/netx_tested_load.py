@@ -199,27 +199,9 @@ class LoadBalancerNode:
         # FIX #1: Replace queue with latest-frame strategy
         self.latest_cloud_request = None
 
-        rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
-        rospy.Subscriber(
-            "/load_balancer/yolov5/object_detect", ObjectsInfo, self.onboard_object_callback, queue_size=1
-        )
-        rospy.Subscriber(
-            "/load_balancer/yolov5/traffic_detect", ObjectsInfo, self.onboard_traffic_callback, queue_size=1
-        )
-
-        depth_camera = rospy.get_param("/depth_camera/camera_name", "depth_cam")
-        rospy.Subscriber(
-            f"/{depth_camera}/rgb/image_raw",
-            Image,
-            self.image_callback,
-            queue_size=1,
-            buff_size=2**22,
-        )
-
-        self.wait_for_services()
-        self.initialize_servos()
-
         # GPU accelerated vision ops (Farneback, Canny, Laplacian)
+        # MUST be initialized before any subscriber is registered so that
+        # _cuda_available is always set when the first frame arrives.
         self._cuda_available = False
         try:
             if cv2.cuda.getCudaEnabledDeviceCount() > 0:
@@ -244,6 +226,26 @@ class LoadBalancerNode:
                 rospy.logwarn("[LoadBalancer] No CUDA device found, falling back to CPU vision ops.")
         except Exception as _e:
             rospy.logwarn(f"[LoadBalancer] CUDA init failed, falling back to CPU: {_e}")
+
+        rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
+        rospy.Subscriber(
+            "/load_balancer/yolov5/object_detect", ObjectsInfo, self.onboard_object_callback, queue_size=1
+        )
+        rospy.Subscriber(
+            "/load_balancer/yolov5/traffic_detect", ObjectsInfo, self.onboard_traffic_callback, queue_size=1
+        )
+
+        depth_camera = rospy.get_param("/depth_camera/camera_name", "depth_cam")
+        rospy.Subscriber(
+            f"/{depth_camera}/rgb/image_raw",
+            Image,
+            self.image_callback,
+            queue_size=1,
+            buff_size=2**22,
+        )
+
+        self.wait_for_services()
+        self.initialize_servos()
 
         rospy.logdebug("LoadBalancerNode initialized.")
         rospy.spin()
