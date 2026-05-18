@@ -616,12 +616,13 @@ class LoadBalancerNode:
         if power_mw and power_mw > self.power_budget_mw:
             cloud_score = clamp(cloud_score + 0.2)
 
-        publish_cached = (
-            not fresh_required
-            and tracker_uncertainty < 0.35
-            and profile["change_score"] < 0.08
-            and profile["motion_score"] < 0.5
-        )
+        # publish_cached = (
+        #     not fresh_required
+        #     and tracker_uncertainty < 0.35
+        #     and profile["change_score"] < 0.08
+        #     and profile["motion_score"] < 0.5
+        # )
+        publish_cached = False
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
