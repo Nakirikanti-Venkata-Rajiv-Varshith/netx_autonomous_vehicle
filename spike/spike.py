@@ -47,7 +47,7 @@ class ResourceStressor:
         
         def cpu_worker_controlled():
             """Controlled CPU worker with adjustable utilization"""
-            period = 0.005  # 100ms period
+            period = 0.1  # 100ms period
             busy_time = period * (target_utilization / 100.0)
             idle_time = period - busy_time
             
@@ -59,18 +59,18 @@ class ResourceStressor:
                 while (time.perf_counter() - start_time) < busy_time:
                     # Mix of different operations
                     x = 0
-                    for i in range(4000):
+                    for i in range(1000):
                         x += np.sqrt(i) * np.sin(i)
                     
                     # Matrix operation
                     if i % 100 == 0:
-                        a = np.random.rand(250, 250)
-                        b = np.random.rand(250, 250)
+                        a = np.random.rand(100, 100)
+                        b = np.random.rand(100, 100)
                         c = np.dot(a, b)
                 
                 # Sleep for remaining time
                 if idle_time > 0:
-                    time.sleep(idle_time*0.2)
+                    time.sleep(idle_time)
         
         # Create multiple processes
         num_cores = multiprocessing.cpu_count()
@@ -104,11 +104,11 @@ class ResourceStressor:
         target_memory = int(available_memory * (target_utilization / 100.0))
         
         # Be more conservative to avoid OOM
-        target_memory = int(target_memory * 0.97)  # Use 80% of target
+        target_memory = int(target_memory * 0.8)  # Use 80% of target
         
         print(f"Target memory: {target_memory / (1024**3):.2f} GB")
         
-        chunk_size = 200 * 1024 * 1024  # Smaller 50MB chunks
+        chunk_size = 50 * 1024 * 1024  # Smaller 50MB chunks
         allocated = 0
         
         try:
@@ -184,7 +184,7 @@ class ResourceStressor:
             """
             
             # Use smaller arrays to avoid timeouts
-            array_size = 15000000
+            array_size = 1000000
             block_size = 256
             grid_size = (array_size + block_size - 1) // block_size
             
@@ -204,15 +204,14 @@ class ResourceStressor:
             while time.time() < end_time and not self.stop_event.is_set():
                 try:
                     # Use smaller iterations to prevent timeout
-                    iterations = 600
+                    iterations = min(10 + (iteration % 20), 30)
                     
                     # Launch kernel
                     kernel(input_gpu, np.int32(array_size), np.int32(iterations),
                           block=(block_size, 1, 1), grid=(grid_size, 1))
                     
                     # Synchronize
-                    if iteration % 10 == 0:
-                        cuda.Context.synchronize()
+                    cuda.Context.synchronize()
                     
                     iteration += 1
                     
@@ -269,8 +268,8 @@ class ResourceStressor:
                 
                 @tf.function
                 def gpu_operations():
-                    a = tf.random.normal((3500, 3500))
-                    b = tf.random.normal((3500, 3500))
+                    a = tf.random.normal((2000, 2000))
+                    b = tf.random.normal((2000, 2000))
                     c = tf.matmul(a, b)
                     return tf.linalg.det(c)
                 
@@ -292,7 +291,7 @@ class ResourceStressor:
                 print("Using PyTorch for GPU stress...")
                 
                 device = torch.device('cuda')
-                size = 3500
+                size = 2000
                 
                 end_time = time.time() + duration
                 while time.time() < end_time and not self.stop_event.is_set():
@@ -415,8 +414,8 @@ def main():
         print("=" * 60)
         
         target_utilization = 90
-        spike_duration = 40
-        interval = 60
+        spike_duration = 10
+        interval = 100
         
         cycle_count = 0
         max_cycles = 5  # Safety limit

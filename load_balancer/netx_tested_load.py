@@ -218,6 +218,33 @@ class LoadBalancerNode:
 
         self.wait_for_services()
         self.initialize_servos()
+
+        # GPU accelerated vision ops (Farneback, Canny, Laplacian)
+        self._cuda_available = False
+        try:
+            if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+                cv2.cuda.setDevice(0)
+                self._of_gpu = cv2.cuda_FarnebackOpticalFlow.create(
+                    numLevels=2,
+                    pyrScale=0.5,
+                    fastPyramids=False,
+                    winSize=10,
+                    numIters=2,
+                    polyN=5,
+                    polySigma=1.2,
+                    flags=0,
+                )
+                self._canny_gpu = cv2.cuda.createCannyEdgeDetector(60.0, 160.0)
+                self._lap_gpu = cv2.cuda.createLaplacianFilter(
+                    cv2.CV_8UC1, cv2.CV_32F, ksize=1
+                )
+                self._cuda_available = True
+                rospy.loginfo("[LoadBalancer] CUDA vision ops initialized (GPU optical flow active).")
+            else:
+                rospy.logwarn("[LoadBalancer] No CUDA device found, falling back to CPU vision ops.")
+        except Exception as _e:
+            rospy.logwarn(f"[LoadBalancer] CUDA init failed, falling back to CPU: {_e}")
+
         rospy.logdebug("LoadBalancerNode initialized.")
         rospy.spin()
 
@@ -486,20 +513,27 @@ class LoadBalancerNode:
         motion_score = 0.0
         # Only compute expensive optical flow every N frames to save 30-50% CPU
         if self.scene_gray is not None and self.profile_skip_counter == 0:
-            # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
             flow_gray = cv2.resize(gray, (80, 45))
-            flow = cv2.calcOpticalFlowFarneback(
-                self.scene_gray,
-                flow_gray,
-                None,
-                0.5,
-                2,  # Reduced from 3 levels
-                10,  # Reduced from 15 window size
-                2,  # Reduced from 3 iterations
-                5,
-                1.2,
-                0,
-            )
+            if self._cuda_available:
+                prev_gm = cv2.cuda_GpuMat()
+                next_gm = cv2.cuda_GpuMat()
+                prev_gm.upload(self.scene_gray)
+                next_gm.upload(flow_gray)
+                flow_gm = self._of_gpu.calc(prev_gm, next_gm, None)
+                flow = flow_gm.download()
+            else:
+                flow = cv2.calcOpticalFlowFarneback(
+                    self.scene_gray,
+                    flow_gray,
+                    None,
+                    0.5,
+                    2,
+                    10,
+                    2,
+                    5,
+                    1.2,
+                    0,
+                )
             magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
             motion_score = float(np.mean(magnitude))
         elif self.scene_embedding is not None:
@@ -510,13 +544,21 @@ class LoadBalancerNode:
         # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
         # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
         if self.profile_skip_counter == 0:
-            edge_density = float(
-                np.count_nonzero(cv2.Canny(gray, 60, 160))
-            ) / float(gray.size)
+            if self._cuda_available:
+                gray_gm = cv2.cuda_GpuMat()
+                gray_gm.upload(gray)
+                edges_gm = self._canny_gpu.detect(gray_gm)
+                edges = edges_gm.download()
+                edge_density = float(np.count_nonzero(edges)) / float(gray.size)
 
-            texture_density = float(
-                cv2.Laplacian(gray, cv2.CV_32F).var()
-            )
+                lap_gm = self._lap_gpu.apply(gray_gm)
+                lap_arr = lap_gm.download()
+                texture_density = float(lap_arr.var())
+            else:
+                edge_density = float(
+                    np.count_nonzero(cv2.Canny(gray, 60, 160))
+                ) / float(gray.size)
+                texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
 
             scene_complexity = clamp(
                 edge_density * 2.5 + texture_density / 2500.0
