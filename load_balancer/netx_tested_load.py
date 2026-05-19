@@ -225,7 +225,7 @@ class LoadBalancerNode:
         while self.is_running:
             try:
                 proc = subprocess.Popen(
-                    ["tegrastats"],
+                    ["tegrastats","--interval", "100"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
@@ -639,7 +639,7 @@ class LoadBalancerNode:
         #         route = "onboard"
 
         route = "onboard"
-        
+
 
         rospy.logdebug(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
