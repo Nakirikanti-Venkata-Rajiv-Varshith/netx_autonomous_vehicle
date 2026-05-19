@@ -91,7 +91,7 @@ class LoadBalancerNode:
         }
         self._resource_lock = threading.Lock()
         self._power_window = collections.deque(maxlen=15)
-        threading.Thread(target=self._poll_tegrastats, daemon=True).start()
+        # threading.Thread(target=self._poll_tegrastats, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
         self.joints_pub = rospy.Publisher(
@@ -616,27 +616,29 @@ class LoadBalancerNode:
         if power_mw and power_mw > self.power_budget_mw:
             cloud_score = clamp(cloud_score + 0.2)
 
-        publish_cached = (
-            not fresh_required
-            and tracker_uncertainty < 0.35
-            and profile["change_score"] < 0.08
-            and profile["motion_score"] < 0.5
-        )
-        # publish_cached = False
+        # publish_cached = (
+        #     not fresh_required
+        #     and tracker_uncertainty < 0.35
+        #     and profile["change_score"] < 0.08
+        #     and profile["motion_score"] < 0.5
+        # )
+        publish_cached = False
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        if latency_critical and edge_score >= cloud_score:
-            route = "onboard"
-        elif bandwidth_quality < 0.35:
-            # Poor network: reduce resolution instead of offloading full res
-            route = "lower_resolution"
-        else:
-            # Normal network: choose based on accuracy need vs compute load
-            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-                route = "offboard"
-            else:
-                route = "onboard"
+        # if latency_critical and edge_score >= cloud_score:
+        #     route = "onboard"
+        # elif bandwidth_quality < 0.35:
+        #     # Poor network: reduce resolution instead of offloading full res
+        #     route = "lower_resolution"
+        # else:
+        #     # Normal network: choose based on accuracy need vs compute load
+        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+        #         route = "offboard"
+        #     else:
+        #         route = "onboard"
+
+        route = "onboard"
 
         rospy.logdebug(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
