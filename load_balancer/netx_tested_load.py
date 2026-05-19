@@ -126,7 +126,7 @@ class LoadBalancerNode:
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
-        self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.08)
+        self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.033)
         self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
 
         self.applications = rospy.get_param("~applications")
