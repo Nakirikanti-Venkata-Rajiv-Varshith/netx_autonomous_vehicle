@@ -91,7 +91,7 @@ class LoadBalancerNode:
         }
         self._resource_lock = threading.Lock()
         self._power_window = collections.deque(maxlen=15)
-        # threading.Thread(target=self._poll_tegrastats, daemon=True).start()
+        threading.Thread(target=self._poll_tegrastats, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
         self.joints_pub = rospy.Publisher(
