@@ -638,7 +638,8 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        route = "onboard"
+        
 
         rospy.logdebug(
             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
