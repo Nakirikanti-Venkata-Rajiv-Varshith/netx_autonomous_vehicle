@@ -1120,7 +1120,7 @@ class LoadBalancerNode:
             self.lane_data = fused_lane
             now = time.time()
             self.cloud_state["lane_detection"] = {"data": parsed_lane, "timestamp": now, "source": "cloud"}
-            self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
+            #self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
             self.lane_pub.publish(String(data=json.dumps(fused_lane)))
 
             if "binary_image" in lane_data:
@@ -1138,7 +1138,7 @@ class LoadBalancerNode:
         fused = self.fuse_detections(app, cloud_detections, cloud_delay)
         now = time.time()
         self.cloud_state[app] = {"data": cloud_detections, "timestamp": now, "source": "cloud"}
-        self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
+        #self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
 
         if app == "collision_avoidance":
             self.detection_results = fused
@@ -1247,7 +1247,7 @@ class LoadBalancerNode:
             "source": "onboard",
             "uncertainty": uncertainty,
         }
-        self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
+        #self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
 
     def get_tracker_uncertainty(self, app):
         if app == "lane_detection":

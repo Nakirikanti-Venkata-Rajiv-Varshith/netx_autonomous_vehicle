@@ -41,7 +41,7 @@ class ResourceStressor:
         
         print("Cleanup completed")
 
-    def stress_cpu_parallel(self, target_utilization=90, duration=10):
+    def stress_cpu_parallel(self, target_utilization=75, duration=10):
         """Stress CPU to target utilization"""
         print(f"Stressing CPU to {target_utilization}%...")
         
@@ -95,7 +95,7 @@ class ResourceStressor:
         self.cpu_processes.clear()
         print("CPU stress completed")
 
-    def stress_ram_parallel(self, target_utilization=90, duration=10):
+    def stress_ram_parallel(self, target_utilization=75, duration=10):
         """Stress RAM to target utilization"""
         print(f"Stressing RAM to {target_utilization}%...")
         
@@ -156,7 +156,7 @@ class ResourceStressor:
             # Clean up RAM (will be done later in main cleanup)
             pass
 
-    def stress_gpu_pycuda_parallel(self, target_utilization=90, duration=10):
+    def stress_gpu_pycuda_parallel(self, target_utilization=75, duration=10):
         """GPU stress using PyCUDA"""
         try:
             import pycuda.driver as cuda
@@ -351,7 +351,7 @@ class ResourceStressor:
                 print(f"Monitoring error: {e}")
                 break
 
-    def run_parallel_stress(self, target_utilization=90, duration=10):
+    def run_parallel_stress(self, target_utilization=75, duration=10):
         """Run all three stresses in parallel"""
         print(f"\n=== Starting PARALLEL stress test for {duration} seconds ===")
         
@@ -413,9 +413,9 @@ def main():
         print("All stresses run simultaneously for maximum load")
         print("=" * 60)
         
-        target_utilization = 90
-        spike_duration = 10
-        interval = 100
+        target_utilization = 75
+        spike_duration = 20
+        interval = 60
         
         cycle_count = 0
         max_cycles = 5  # Safety limit
