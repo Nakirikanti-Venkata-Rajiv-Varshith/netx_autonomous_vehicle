@@ -75,8 +75,6 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
-        self.available_bandwidth_mbps = -1
-        self.bandwidth_probe_latency_ms = -1
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
@@ -94,7 +92,6 @@ class LoadBalancerNode:
         self._resource_lock = threading.Lock()
         self._power_window = collections.deque(maxlen=15)
         threading.Thread(target=self._poll_tegrastats, daemon=True).start()
-        threading.Thread(target=self._network_probe_monitor, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
         self.joints_pub = rospy.Publisher(
@@ -130,7 +127,8 @@ class LoadBalancerNode:
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
         self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.033)
-        self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
+        # self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
+        self.cloud_roi_headers_only = False
 
         self.applications = rospy.get_param("~applications")
         self.edge_server_available = True
@@ -193,8 +191,6 @@ class LoadBalancerNode:
                 "motion_score",
                 "scene_complexity",
                 "change_score",
-                "available_bandwidth_mbps",
-                "probe_latency_ms",
                 "edge_score",
                 "cloud_score",
                 "e2e_latency_sec",
@@ -280,66 +276,6 @@ class LoadBalancerNode:
             except Exception as exc:
                 rospy.logwarn_throttle(10.0, f"[tegrastats poller] error: {exc}")
                 time.sleep(2.0)
-
-    def _network_probe_monitor(self):
-   
-
-        while self.is_running:
-            try:
-                # Create dummy payload (~256KB)
-                dummy = np.random.randint(
-                    0,
-                    255,
-                    (480, 640, 3),
-                    dtype=np.uint8
-                )
-
-                _, buffer = cv2.imencode(
-                    ".jpg",
-                    dummy,
-                    [cv2.IMWRITE_JPEG_QUALITY, 75]
-                )
-
-                payload = buffer.tobytes()
-
-                payload_size_bytes = len(payload)
-
-                headers = {
-                    "Content-Type": "application/octet-stream",
-                    "detection-flag": "network_probe",
-                    "Cloud-Transport": "jpeg",
-                }
-
-                start = time.time()
-
-                response = self.session.post(
-                    self.server_url,
-                    data=payload,
-                    headers=headers,
-                    timeout=5.0,
-                )
-
-                elapsed = max(time.time() - start, 1e-6)
-
-                # REAL throughput estimate
-                mbps = (payload_size_bytes * 8) / (elapsed * 1_000_000)
-
-                self.available_bandwidth_mbps = round(mbps, 2)
-                self.bandwidth_probe_latency_ms = round(elapsed * 1000.0, 2)
-
-                rospy.loginfo(
-                    f"[NET PROBE] "
-                    f"{self.available_bandwidth_mbps:.2f} Mbps | "
-                    f"{self.bandwidth_probe_latency_ms:.2f} ms"
-                )
-
-            except Exception as exc:
-                rospy.logwarn(f"[NET PROBE] failed: {exc}")
-
-                self.available_bandwidth_mbps = 0.0
-                self.bandwidth_probe_latency_ms = 0.0
-
-            time.sleep(5)
 
     def _get_resource_usage(self):
         with self._resource_lock:
@@ -689,9 +625,8 @@ class LoadBalancerNode:
         # )
         publish_cached = False
 
-        #Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        #Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-
+        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
+        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
         if latency_critical and edge_score >= cloud_score:
             route = "onboard"
         elif bandwidth_quality < 0.35:
@@ -705,15 +640,6 @@ class LoadBalancerNode:
                 route = "onboard"
 
         # route = "offboard"
-
-        # Alternate every 5 seconds between onboard and offboard
-
-        # current_time = int(time.time())
-
-        # if (current_time // 5) % 2 == 0:
-        #     route = "onboard"
-        # else:
-        #     route = "offboard"
 
 
         rospy.logdebug(
@@ -831,8 +757,6 @@ class LoadBalancerNode:
                     profile.get("motion_score", ""),
                     profile.get("scene_complexity", ""),
                     profile.get("change_score", ""),
-                    round(self.available_bandwidth_mbps, 2),
-                    round(self.bandwidth_probe_latency_ms, 2),
                     scores.get("edge_score", ""),
                     scores.get("cloud_score", ""),
                     e2e,
@@ -893,7 +817,8 @@ class LoadBalancerNode:
             self.publish_edge_fallback(app)
 
     def prepare_cloud_payload(self, frame, app, location_label):
-        roi = self.extract_cloud_roi(app, frame.shape[1], frame.shape[0])
+        # roi = self.extract_cloud_roi(app, frame.shape[1], frame.shape[0])
+        roi = False
         cropped_frame = frame
         if roi and not self.cloud_roi_headers_only:
             cropped_frame = self.safe_crop_roi(frame, roi)
@@ -935,7 +860,8 @@ class LoadBalancerNode:
 
     def _prepare_cloud_payload_optimized(self, frame, app, location_label):
         """Optimize: Frame pre-downscaled, only ROI extraction and encoding needed"""
-        roi = self._get_cached_roi(app, frame.shape[1], frame.shape[0])
+        #roi = self._get_cached_roi(app, frame.shape[1], frame.shape[0])
+        roi = False
         cropped_frame = frame
         if roi and not self.cloud_roi_headers_only:
             cropped_frame = self.safe_crop_roi(frame, roi)
@@ -1197,7 +1123,7 @@ class LoadBalancerNode:
             self.lane_data = fused_lane
             now = time.time()
             self.cloud_state["lane_detection"] = {"data": parsed_lane, "timestamp": now, "source": "cloud"}
-            #self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
+            self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
             self.lane_pub.publish(String(data=json.dumps(fused_lane)))
 
             if "binary_image" in lane_data:
@@ -1215,7 +1141,7 @@ class LoadBalancerNode:
         fused = self.fuse_detections(app, cloud_detections, cloud_delay)
         now = time.time()
         self.cloud_state[app] = {"data": cloud_detections, "timestamp": now, "source": "cloud"}
-        #self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
+        self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
 
         if app == "collision_avoidance":
             self.detection_results = fused
@@ -1324,7 +1250,7 @@ class LoadBalancerNode:
             "source": "onboard",
             "uncertainty": uncertainty,
         }
-        #self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
+        self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
 
     def get_tracker_uncertainty(self, app):
         if app == "lane_detection":
