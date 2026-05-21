@@ -75,6 +75,8 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
+        self.available_bandwidth_mbps = 0.0
+        self.bandwidth_probe_latency_ms = 0.0
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
@@ -92,6 +94,7 @@ class LoadBalancerNode:
         self._resource_lock = threading.Lock()
         self._power_window = collections.deque(maxlen=15)
         threading.Thread(target=self._poll_tegrastats, daemon=True).start()
+        threading.Thread(target=self._network_probe_monitor, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
         self.joints_pub = rospy.Publisher(
@@ -190,6 +193,8 @@ class LoadBalancerNode:
                 "motion_score",
                 "scene_complexity",
                 "change_score",
+                "available_bandwidth_mbps",
+                "probe_latency_ms",
                 "edge_score",
                 "cloud_score",
                 "e2e_latency_sec",
@@ -275,6 +280,52 @@ class LoadBalancerNode:
             except Exception as exc:
                 rospy.logwarn_throttle(10.0, f"[tegrastats poller] error: {exc}")
                 time.sleep(2.0)
+
+    def _network_probe_monitor(self):
+        """
+        Lightweight realtime-safe bandwidth estimation.
+        Uses tiny HTTP probe against edge server.
+        """
+
+        probe_size_bytes = 200 * 1024  # 200 KB
+
+        while self.is_running:
+            try:
+                start = time.time()
+
+                response = self.session.get(
+                    self.server_url,
+                    stream=True,
+                    timeout=2.0,
+                )
+
+                downloaded = 0
+
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        break
+
+                    downloaded += len(chunk)
+
+                    if downloaded >= probe_size_bytes:
+                        break
+
+                elapsed = max(time.time() - start, 1e-6)
+
+                mbps = (downloaded * 8) / (elapsed * 1_000_000)
+
+                self.available_bandwidth_mbps = round(mbps, 2)
+                self.bandwidth_probe_latency_ms = round(elapsed * 1000.0, 2)
+
+                rospy.loginfo(
+                    f"[NET PROBE] BW={mbps:.2f} Mbps "
+                    f"Latency={elapsed*1000:.2f} ms"
+                )
+
+            except Exception as exc:
+                rospy.logwarn(f"[NET PROBE] failed: {exc}")
+
+            time.sleep(5)
 
     def _get_resource_usage(self):
         with self._resource_lock:
@@ -571,15 +622,15 @@ class LoadBalancerNode:
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
-        # if not self.network_ok or not edge_available:
-        #     rospy.logdebug("[DECISION] network unavailable, forcing onboard")
-        #     return {
-        #         "route": "onboard",
-        #         "edge_score": 1.0,
-        #         "cloud_score": 0.0,
-        #         "publish_cached": False,
-        #         "force_fresh": True,
-        #     }
+        if not self.network_ok or not edge_available:
+            rospy.logdebug("[DECISION] network unavailable, forcing onboard")
+            return {
+                "route": "onboard",
+                "edge_score": 1.0,
+                "cloud_score": 0.0,
+                "publish_cached": False,
+                "force_fresh": True,
+            }
 
         cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
         gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
@@ -624,30 +675,31 @@ class LoadBalancerNode:
         # )
         publish_cached = False
 
-        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
+        #Simplified routing: onboard vs offboard only (remove dual_path complexity)
+        #Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
+
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.35:
+            # Poor network: reduce resolution instead of offloading full res
+            route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
 
         # route = "offboard"
 
         # Alternate every 5 seconds between onboard and offboard
 
-        current_time = int(time.time())
+        # current_time = int(time.time())
 
-        if (current_time // 5) % 2 == 0:
-            route = "onboard"
-        else:
-            route = "offboard"
+        # if (current_time // 5) % 2 == 0:
+        #     route = "onboard"
+        # else:
+        #     route = "offboard"
 
 
         rospy.logdebug(
@@ -765,6 +817,8 @@ class LoadBalancerNode:
                     profile.get("motion_score", ""),
                     profile.get("scene_complexity", ""),
                     profile.get("change_score", ""),
+                    round(self.available_bandwidth_mbps, 2),
+                    round(self.bandwidth_probe_latency_ms, 2),
                     scores.get("edge_score", ""),
                     scores.get("cloud_score", ""),
                     e2e,
