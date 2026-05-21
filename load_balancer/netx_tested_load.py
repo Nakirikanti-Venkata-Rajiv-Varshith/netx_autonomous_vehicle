@@ -6,7 +6,6 @@ import csv
 import gc
 import json
 import os
-import queue
 import re
 import signal
 import subprocess
@@ -75,16 +74,10 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
-        self.test_bandwidth_enabled = True
-        self.simulated_bandwidth = 0.0
-        self.bandwidth_step = 5.0
-        self.max_bandwidth = 50.0
-        self.bandwidth_update_interval = 20  # seconds
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
-        threading.Thread(target=self.simulate_bandwidth, daemon=True).start()
 
         signal.signal(signal.SIGINT, self.shutdown)
 
@@ -133,8 +126,6 @@ class LoadBalancerNode:
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 7.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 2.0)
         self.min_processing_interval = rospy.get_param("~min_processing_interval", 0.033)
-        # self.cloud_roi_headers_only = rospy.get_param("~cloud_roi_headers_only", True)
-        self.cloud_roi_headers_only = False
 
         self.applications = rospy.get_param("~applications")
         self.edge_server_available = True
@@ -164,13 +155,11 @@ class LoadBalancerNode:
             "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "fused"},
             "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "fused"},
         }
-        
-        # Optimize: Cache ROI to avoid repeated min/max computations
-        self._roi_cache = {"app": None, "roi": None, "timestamp": 0.0}
 
-        self.cloud_inflight = 0
         self.cloud_lock = threading.Lock()
+        self.cloud_event = threading.Event()
         threading.Thread(target=self._cloud_worker, daemon=True).start()
+        threading.Thread(target=self._gc_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
             "~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/load_balancer_logs"
@@ -188,7 +177,6 @@ class LoadBalancerNode:
                 "decision",
                 "execution_location",
                 "bandwidth_mbps",
-                "assigned_test_bandwidth",
                 "cpu_percent",
                 "gpu_percent",
                 "power_mw",
@@ -284,28 +272,14 @@ class LoadBalancerNode:
                 rospy.logwarn_throttle(10.0, f"[tegrastats poller] error: {exc}")
                 time.sleep(2.0)
 
+    def _gc_worker(self):
+        while self.is_running:
+            time.sleep(5)
+            gc.collect()
+
     def _get_resource_usage(self):
         with self._resource_lock:
             return dict(self._resource_cache)
-
-    def simulate_bandwidth(self):
-        """
-        Simulate bandwidth:
-        0 Mbps -> +5 every 20 sec -> until 50 Mbps
-        """
-        while self.is_running and self.test_bandwidth_enabled:
-            self.upload_speed = self.simulated_bandwidth
-            self.download_speed = self.simulated_bandwidth
-            self.network_ok = True
-
-            rospy.loginfo(
-                f"[TEST BANDWIDTH] Current simulated bandwidth: {self.simulated_bandwidth} Mbps"
-            )
-
-            time.sleep(self.bandwidth_update_interval)
-            self.simulated_bandwidth += self.bandwidth_step
-            if self.simulated_bandwidth > self.max_bandwidth:
-                self.simulated_bandwidth = self.max_bandwidth
 
     def wait_for_services(self):
         if not rospy.get_param("~only_line_follow", False):
@@ -335,6 +309,7 @@ class LoadBalancerNode:
 
     def shutdown(self, signum, frame):
         self.is_running = False
+        self.cloud_event.set()
         rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
             self.csv_file.close()
@@ -363,8 +338,6 @@ class LoadBalancerNode:
             rospy.logerr(f"Error in image_callback: {exc}")
 
     def bandwidth_callback(self, msg):
-        if self.test_bandwidth_enabled:
-            return
         data = list(msg.data)
         if len(data) >= 2:
             self.upload_speed = float(data[0])
@@ -384,9 +357,6 @@ class LoadBalancerNode:
         self.last_processing_time = now
 
         self.frame_id += 1
-        # FIX #3: Manually trigger garbage collection every 100 frames to control P90 latency
-        if self.frame_id % 100 == 0:
-            gc.collect()
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
         if capture_time <= 0:
             capture_time = now
@@ -613,14 +583,10 @@ class LoadBalancerNode:
         cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
         gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
         ram_norm = clamp((ram_usage or 0.0) / 100.0)
-        queue_depth = clamp(float(self.get_cloud_queue_depth()))
         rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
         jitter_penalty = clamp(self.jitter_ms / 80.0)
-        # bandwidth_quality = clamp(
-        #     min(upload_speed, download_speed) / float(max(self.bandwidth_high_threshold, 0.1))
-        # )
-        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.5+ (1.0 - jitter_penalty) * 0.3+ (1.0 - queue_depth) * 0.2)
-        low_latency = clamp(1.0 - ((rtt_penalty * 0.65) + (jitter_penalty * 0.2) + (queue_depth * 0.15)))
+        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
+        low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
         low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
         low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
         high_motion = clamp(1 - low_motion)
@@ -633,7 +599,7 @@ class LoadBalancerNode:
             + (profile["change_score"] * 0.1)
             + (tracker_uncertainty * 0.15)
         )
-        latency_penalty = clamp((rtt_penalty * 0.7) + (jitter_penalty * 0.2) + (queue_depth * 0.1))
+        latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
         edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
         cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
@@ -671,7 +637,7 @@ class LoadBalancerNode:
 
 
         rospy.logdebug(
-            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f queue=%d",
+            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
             app,
             edge_score,
             cloud_score,
@@ -679,7 +645,6 @@ class LoadBalancerNode:
             fresh_required,
             "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
             self.jitter_ms,
-            self.get_cloud_queue_depth(),
         )
         return {
             "route": route,
@@ -711,38 +676,6 @@ class LoadBalancerNode:
     def lower_resolution(self, frame, scale_factor=None):
         scale = scale_factor if scale_factor is not None else self.low_res_scale
         return cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
-
-    def safe_crop_roi(self, frame, roi):
-        """
-        Safely crop ROI from frame with padding.
-        ROI format: (x1, y1, x2, y2)
-        Falls back to full frame if invalid.
-        """
-        if not roi or len(roi) != 4:
-            return frame
-
-        h, w = frame.shape[:2]
-
-        x1, y1, x2, y2 = roi
-
-        pad = 20
-        x1 -= pad
-        y1 -= pad
-        x2 += pad
-        y2 += pad
-
-        # Clamp values (VERY IMPORTANT)
-        x1 = max(0, min(w - 1, int(x1)))
-        x2 = max(0, min(w, int(x2)))
-        y1 = max(0, min(h - 1, int(y1)))
-        y2 = max(0, min(h, int(y2)))
-
-        # Validate ROI
-        if x2 <= x1 or y2 <= y1:
-            return frame
-
-        return frame[y1:y2, x1:x2]
-    
 
     def log_row(
         self,
@@ -776,7 +709,6 @@ class LoadBalancerNode:
                     decision,
                     location,
                     round(bandwidth, 2),
-                    round(self.simulated_bandwidth, 2),
                     round(cpu, 2) if cpu is not None else "",
                     round(gpu, 2) if gpu is not None else "",
                     round(power_mw, 2) if power_mw is not None else "",
@@ -841,63 +773,14 @@ class LoadBalancerNode:
             # FIX #1: Replace queue with latest-frame strategy (standard realtime robotics approach)
             with self.cloud_lock:
                 self.latest_cloud_request = request_meta
+                self.cloud_event.set()
         except Exception as exc:
             rospy.logwarn(f"Failed to store cloud request for {app}: {exc}")
             self.publish_edge_fallback(app)
 
-    def prepare_cloud_payload(self, frame, app, location_label):
-        # roi = self.extract_cloud_roi(app, frame.shape[1], frame.shape[0])
-        roi = False
-        cropped_frame = frame
-        if roi and not self.cloud_roi_headers_only:
-            cropped_frame = self.safe_crop_roi(frame, roi)
-        target_width = self.edge_target_width if location_label == "edge_low_res" else self.cloud_target_width
-        target_height = self.cloud_target_height
-
-        resize_ratio = min(float(target_width) / cropped_frame.shape[1], float(target_height) / cropped_frame.shape[0])
-        resize_ratio = min(resize_ratio, 0.80 if location_label == "edge_low_res" else 1.0)
-        if location_label == "edge_low_res":
-            resize_ratio = min(resize_ratio, self.low_res_scale)
-
-        resized = cropped_frame
-        if abs(resize_ratio - 1.0) > 1e-3:
-            resized = cv2.resize(
-                cropped_frame,
-                (max(1, int(cropped_frame.shape[1] * resize_ratio)), max(1, int(cropped_frame.shape[0] * resize_ratio))),
-            )
-
-        bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
-        jpeg_quality = 75 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 65
-        ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-        if not ok:
-            raise RuntimeError("failed to encode cloud payload")
-
-        headers = {
-            "Content-Type": "application/octet-stream",
-            "Frame-Width": str(bgr.shape[1]),
-            "Frame-Height": str(bgr.shape[0]),
-            "Client-Timestamp": str(time.time()),
-            "detection-flag": app,
-            "Cloud-Transport": "jpeg",
-            "Cloud-Route": location_label,
-            "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
-            "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
-            # "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
-            "Suggested-ROI": "",
-            "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
-        }
-        return {"payload": buffer.tobytes(), "headers": headers}
-
     def _prepare_cloud_payload_optimized(self, frame, app, location_label):
-        """Optimize: Frame pre-downscaled, only ROI extraction and encoding needed"""
-        #roi = self._get_cached_roi(app, frame.shape[1], frame.shape[0])
-        roi = False
-        cropped_frame = frame
-        if roi and not self.cloud_roi_headers_only:
-            cropped_frame = self.safe_crop_roi(frame, roi)
-        
-        # Frame already at target size from forward_to_edge downscaling
-        resized = cropped_frame
+        """Optimize: Frame pre-downscaled and encode for cloud transport."""
+        resized = frame
 
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
         
@@ -906,7 +789,7 @@ class LoadBalancerNode:
         rtt_penalty = (self.rtt_ms or 120.0) / 150.0
         
         if min_bandwidth >= self.bandwidth_high_threshold:
-            jpeg_quality = 75
+            jpeg_quality = 80
         elif min_bandwidth >= self.bandwidth_low_threshold:
             jpeg_quality = 70
         else:
@@ -927,25 +810,9 @@ class LoadBalancerNode:
             "Cloud-Route": location_label,
             "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
             "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
-            # "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
-            "Suggested-ROI": "",
-            "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
         }
         return {"payload": buffer.tobytes(), "headers": headers}
     
-    def _get_cached_roi(self, app, width, height):
-        """Optimize: Cache ROI extraction to avoid repeated min/max computations"""
-        now = time.time()
-        # Invalidate cache after 0.1s to allow dynamic updates
-        if self._roi_cache["app"] == app and (now - self._roi_cache["timestamp"]) < 0.1:
-            return self._roi_cache["roi"]
-        
-        roi = self.extract_cloud_roi(app, width, height)
-        self._roi_cache["app"] = app
-        self._roi_cache["roi"] = roi
-        self._roi_cache["timestamp"] = now
-        return roi
-
     def forward_to_onboard(self, app, ros_image, frame_override=None):
         try:
             frame_rgb = frame_override if frame_override is not None else self.image
@@ -998,15 +865,15 @@ class LoadBalancerNode:
     def _cloud_worker(self):
         # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
         while self.is_running:
-            time.sleep(0.001)  # Small sleep to avoid busy-wait
-            
-            # Get the latest request (if any)
+            self.cloud_event.wait()
+            if not self.is_running:
+                break
+
             with self.cloud_lock:
                 request_meta = self.latest_cloud_request
                 self.latest_cloud_request = None
                 if request_meta is None:
                     continue
-                self.cloud_inflight = 0
 
             try:
                 # Optimize: Prepare payload here in worker thread instead of main thread
@@ -1040,7 +907,8 @@ class LoadBalancerNode:
                 self.publish_edge_fallback(request_meta["app"])
             finally:
                 with self.cloud_lock:
-                    self.cloud_inflight = max(0, self.cloud_inflight - 1)
+                    if self.latest_cloud_request is None:
+                        self.cloud_event.clear()
 
                 self.log_row(
                     request_meta["frame_uuid"],
@@ -1329,34 +1197,7 @@ class LoadBalancerNode:
             state = self.edge_state["traffic_sign_detection"]
             self.traffic_pub.publish(String(data=json.dumps(state["data"])))
 
-    def extract_cloud_roi(self, app, width, height):
-        if app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
-            detections = self.edge_state["collision_avoidance"]["data"]
-        elif app in ("traffic_sign_detection", "traffic_light_detection"):
-            detections = self.edge_state["traffic_sign_detection"]["data"]
-        else:
-            detections = []
 
-        if not detections:
-            return [0, 0, width, height]
-
-        x1 = min(det["box"][0] for det in detections)
-        y1 = min(det["box"][1] for det in detections)
-        x2 = max(det["box"][2] for det in detections)
-        y2 = max(det["box"][3] for det in detections)
-        pad_x = int(0.1 * width)
-        pad_y = int(0.1 * height)
-        return [
-            max(0, x1 - pad_x),
-            max(0, y1 - pad_y),
-            min(width, x2 + pad_x),
-            min(height, y2 + pad_y),
-        ]
-
-    def get_cloud_queue_depth(self):
-        with self.cloud_lock:
-            # FIX #1: Now only tracking inflight requests, no queue buffering (latest-frame strategy)
-            return self.cloud_inflight
 
     def find_best_match(self, detection, candidates):
         best = None
