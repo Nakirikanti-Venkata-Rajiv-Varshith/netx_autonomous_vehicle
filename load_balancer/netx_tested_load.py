@@ -75,10 +75,16 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
+        self.test_bandwidth_enabled = True
+        self.simulated_bandwidth = 0.0
+        self.bandwidth_step = 5.0
+        self.max_bandwidth = 50.0
+        self.bandwidth_update_interval = 20  # seconds
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
+        threading.Thread(target=self.simulate_bandwidth, daemon=True).start()
 
         signal.signal(signal.SIGINT, self.shutdown)
 
@@ -182,6 +188,7 @@ class LoadBalancerNode:
                 "decision",
                 "execution_location",
                 "bandwidth_mbps",
+                "assigned_test_bandwidth",
                 "cpu_percent",
                 "gpu_percent",
                 "power_mw",
@@ -281,6 +288,25 @@ class LoadBalancerNode:
         with self._resource_lock:
             return dict(self._resource_cache)
 
+    def simulate_bandwidth(self):
+        """
+        Simulate bandwidth:
+        0 Mbps -> +5 every 20 sec -> until 50 Mbps
+        """
+        while self.is_running and self.test_bandwidth_enabled:
+            self.upload_speed = self.simulated_bandwidth
+            self.download_speed = self.simulated_bandwidth
+            self.network_ok = True
+
+            rospy.loginfo(
+                f"[TEST BANDWIDTH] Current simulated bandwidth: {self.simulated_bandwidth} Mbps"
+            )
+
+            time.sleep(self.bandwidth_update_interval)
+            self.simulated_bandwidth += self.bandwidth_step
+            if self.simulated_bandwidth > self.max_bandwidth:
+                self.simulated_bandwidth = self.max_bandwidth
+
     def wait_for_services(self):
         if not rospy.get_param("~only_line_follow", False):
             while not rospy.is_shutdown():
@@ -337,6 +363,8 @@ class LoadBalancerNode:
             rospy.logerr(f"Error in image_callback: {exc}")
 
     def bandwidth_callback(self, msg):
+        if self.test_bandwidth_enabled:
+            return
         data = list(msg.data)
         if len(data) >= 2:
             self.upload_speed = float(data[0])
@@ -748,6 +776,7 @@ class LoadBalancerNode:
                     decision,
                     location,
                     round(bandwidth, 2),
+                    round(self.simulated_bandwidth, 2),
                     round(cpu, 2) if cpu is not None else "",
                     round(gpu, 2) if gpu is not None else "",
                     round(power_mw, 2) if power_mw is not None else "",
