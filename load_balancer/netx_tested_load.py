@@ -853,7 +853,8 @@ class LoadBalancerNode:
             "Cloud-Route": location_label,
             "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
             "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
-            "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
+            # "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
+            "Suggested-ROI": "",
             "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
         }
         return {"payload": buffer.tobytes(), "headers": headers}
@@ -897,7 +898,8 @@ class LoadBalancerNode:
             "Cloud-Route": location_label,
             "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
             "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
-            "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
+            # "Suggested-ROI": ",".join(map(str, roi)) if roi else "",
+            "Suggested-ROI": "",
             "ROI-Headers-Only": "1" if self.cloud_roi_headers_only else "0",
         }
         return {"payload": buffer.tobytes(), "headers": headers}
