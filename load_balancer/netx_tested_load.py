@@ -282,50 +282,64 @@ class LoadBalancerNode:
                 time.sleep(2.0)
 
     def _network_probe_monitor(self):
-        """
-        Lightweight realtime-safe bandwidth estimation.
-        Uses tiny HTTP probe against edge server.
-        """
-
-        probe_size_bytes = 200 * 1024  # 200 KB
+   
 
         while self.is_running:
             try:
-                start = time.time()
-
-                response = self.session.get(
-                    self.server_url,
-                    stream=True,
-                    timeout=2.0,
+                # Create dummy payload (~256KB)
+                dummy = np.random.randint(
+                    0,
+                    255,
+                    (480, 640, 3),
+                    dtype=np.uint8
                 )
 
-                downloaded = 0
+                _, buffer = cv2.imencode(
+                    ".jpg",
+                    dummy,
+                    [cv2.IMWRITE_JPEG_QUALITY, 75]
+                )
 
-                for chunk in response.iter_content(chunk_size=8192):
-                    if not chunk:
-                        break
+                payload = buffer.tobytes()
 
-                    downloaded += len(chunk)
+                payload_size_bytes = len(payload)
 
-                    if downloaded >= probe_size_bytes:
-                        break
+                headers = {
+                    "Content-Type": "application/octet-stream",
+                    "detection-flag": "network_probe",
+                    "Cloud-Transport": "jpeg",
+                }
+
+                start = time.time()
+
+                response = self.session.post(
+                    self.server_url,
+                    data=payload,
+                    headers=headers,
+                    timeout=5.0,
+                )
 
                 elapsed = max(time.time() - start, 1e-6)
 
-                mbps = (downloaded * 8) / (elapsed * 1_000_000)
+                # REAL throughput estimate
+                mbps = (payload_size_bytes * 8) / (elapsed * 1_000_000)
 
                 self.available_bandwidth_mbps = round(mbps, 2)
                 self.bandwidth_probe_latency_ms = round(elapsed * 1000.0, 2)
 
                 rospy.loginfo(
-                    f"[NET PROBE] BW={mbps:.2f} Mbps "
-                    f"Latency={elapsed*1000:.2f} ms"
+                    f"[NET PROBE] "
+                    f"{self.available_bandwidth_mbps:.2f} Mbps | "
+                    f"{self.bandwidth_probe_latency_ms:.2f} ms"
                 )
 
             except Exception as exc:
                 rospy.logwarn(f"[NET PROBE] failed: {exc}")
 
-            time.sleep(5)
+                self.available_bandwidth_mbps = 0.0
+                self.bandwidth_probe_latency_ms = 0.0
+
+            time.sleep(10)
 
     def _get_resource_usage(self):
         with self._resource_lock:
