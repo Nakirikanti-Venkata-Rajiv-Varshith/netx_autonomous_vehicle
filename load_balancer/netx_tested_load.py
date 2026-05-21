@@ -571,15 +571,15 @@ class LoadBalancerNode:
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
-        if not self.network_ok or not edge_available:
-            rospy.logdebug("[DECISION] network unavailable, forcing onboard")
-            return {
-                "route": "onboard",
-                "edge_score": 1.0,
-                "cloud_score": 0.0,
-                "publish_cached": False,
-                "force_fresh": True,
-            }
+        # if not self.network_ok or not edge_available:
+        #     rospy.logdebug("[DECISION] network unavailable, forcing onboard")
+        #     return {
+        #         "route": "onboard",
+        #         "edge_score": 1.0,
+        #         "cloud_score": 0.0,
+        #         "publish_cached": False,
+        #         "force_fresh": True,
+        #     }
 
         cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
         gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
