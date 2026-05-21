@@ -626,19 +626,28 @@ class LoadBalancerNode:
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        if latency_critical and edge_score >= cloud_score:
-            route = "onboard"
-        elif bandwidth_quality < 0.35:
-            # Poor network: reduce resolution instead of offloading full res
-            route = "lower_resolution"
-        else:
-            # Normal network: choose based on accuracy need vs compute load
-            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-                route = "offboard"
-            else:
-                route = "onboard"
+        # if latency_critical and edge_score >= cloud_score:
+        #     route = "onboard"
+        # elif bandwidth_quality < 0.35:
+        #     # Poor network: reduce resolution instead of offloading full res
+        #     route = "lower_resolution"
+        # else:
+        #     # Normal network: choose based on accuracy need vs compute load
+        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+        #         route = "offboard"
+        #     else:
+        #         route = "onboard"
 
         # route = "offboard"
+
+        # Alternate every 5 seconds between onboard and offboard
+
+        current_time = int(time.time())
+
+        if (current_time // 5) % 2 == 0:
+            route = "onboard"
+        else:
+            route = "offboard"
 
 
         rospy.logdebug(

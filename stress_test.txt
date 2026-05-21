@@ -1,0 +1,8 @@
+Run this command in one terminal to stress the network
+ 
+hiwonder@hiwonder:~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/spike$ sudo bash gradual.sh test
+
+
+Run this command in other terminal to stress cpu, gpu and ram staying in the same spike folder
+
+python3 spike.py
