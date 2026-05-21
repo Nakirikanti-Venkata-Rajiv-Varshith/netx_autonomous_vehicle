@@ -75,8 +75,8 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
-        self.available_bandwidth_mbps = 0.0
-        self.bandwidth_probe_latency_ms = 0.0
+        self.available_bandwidth_mbps = -1
+        self.bandwidth_probe_latency_ms = -1
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
@@ -339,7 +339,7 @@ class LoadBalancerNode:
                 self.available_bandwidth_mbps = 0.0
                 self.bandwidth_probe_latency_ms = 0.0
 
-            time.sleep(10)
+            time.sleep(5)
 
     def _get_resource_usage(self):
         with self._resource_lock:
