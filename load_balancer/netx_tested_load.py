@@ -101,7 +101,7 @@ class LoadBalancerNode:
         self.lane_img_pub = rospy.Publisher("/load_balancer/lane_image", Image, queue_size=1)
         self.yolo_img_pub = rospy.Publisher("/load_balancer/yolo_image", Image, queue_size=1)
         self.yolo_traffic = rospy.Publisher("/load_balancer/yolo/traffic_image", Image, queue_size=2)
-        self.yolo_obj = rospy.Publisher("/load_balancer/yolo/object_image", Image, queue_size=3)
+        self.yolo_obj = rospy.Publisher("/load_balancer/yolo/object_image", Image, queue_size=2)
         self.binary_img_pub = rospy.Publisher("/load_balancer/lane_binary_image", Image, queue_size=1)
         self.result_img_pub = rospy.Publisher("/load_balancer/lane_result_image", Image, queue_size=1)
 
@@ -838,7 +838,7 @@ class LoadBalancerNode:
             )
 
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
-        jpeg_quality = 75 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 60
+        jpeg_quality = 75 if min(self.upload_speed, self.download_speed) >= self.bandwidth_high_threshold else 65
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
             raise RuntimeError("failed to encode cloud payload")
@@ -879,10 +879,10 @@ class LoadBalancerNode:
         if min_bandwidth >= self.bandwidth_high_threshold:
             jpeg_quality = 75
         elif min_bandwidth >= self.bandwidth_low_threshold:
-            jpeg_quality = 65
+            jpeg_quality = 70
         else:
             # High latency or low bandwidth: use lower quality
-            jpeg_quality = 50 if rtt_penalty > 0.7 else 55
+            jpeg_quality = 60 if rtt_penalty > 0.7 else 65
         
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:

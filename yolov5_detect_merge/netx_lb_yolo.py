@@ -27,7 +27,7 @@ class Yolov5Node:
         signal.signal(signal.SIGINT, self.shutdown)
 
         self.fps = fps.FPS()
-        self.frame_skip = max(1, int(rospy.get_param("~frame_skip", 2)))
+        self.frame_skip = max(1, int(rospy.get_param("~frame_skip", 1)))
         self.cache_ttl = rospy.get_param("~cache_ttl", 0.3)
 
         engine = rospy.get_param("~engine")
