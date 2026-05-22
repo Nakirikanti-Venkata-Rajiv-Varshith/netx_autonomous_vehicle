@@ -114,7 +114,7 @@ class LoadBalancerNode:
         # Decision thresholds
         self.resource_threshold       = rospy.get_param('~resource_threshold',       75)  # %
         self.bandwidth_high_threshold = rospy.get_param('~bandwidth_high_threshold',  7)  # Mbps
-        self.bandwidth_low_threshold  = rospy.get_param('~bandwidth_low_threshold',   4)  # Mbps
+        self.bandwidth_low_threshold  = rospy.get_param('~bandwidth_low_threshold',   7)  # Mbps
 
         # Edge availability tracking — must be set BEFORE subscriber is registered
         # so handle_frame never sees missing attributes if a camera frame arrives
@@ -415,7 +415,7 @@ class LoadBalancerNode:
         else:
             rospy.loginfo("[DECISION PATH] Low/medium latency sensitivity")
             if accuracy_priority == "high":
-                result = "onboard" if not bandwidth_sufficient else "offboard"
+                result = "onboard" if bandwidth_low else "offboard"
             else:
                 result = "offboard" if bandwidth_sufficient else "lower_resolution"
 
