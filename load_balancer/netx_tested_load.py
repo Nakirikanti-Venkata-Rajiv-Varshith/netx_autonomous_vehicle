@@ -178,6 +178,7 @@ class LoadBalancerNode:
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True
                 )
+                rospy.loginfo("🚀 NEW UPDATED TEGRASTATS POLLER ACTIVE")
                 for line in proc.stdout:
                     if not self.is_running:
                         break
