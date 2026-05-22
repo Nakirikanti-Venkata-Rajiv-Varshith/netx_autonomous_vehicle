@@ -113,8 +113,8 @@ class LoadBalancerNode:
         self.applications   = rospy.get_param("~applications")
         # Decision thresholds
         self.resource_threshold       = rospy.get_param('~resource_threshold',       75)  # %
-        self.bandwidth_high_threshold = rospy.get_param('~bandwidth_high_threshold',  7)  # Mbps
-        self.bandwidth_low_threshold  = rospy.get_param('~bandwidth_low_threshold',   7)  # Mbps
+        self.bandwidth_high_threshold = rospy.get_param('~bandwidth_high_threshold',  0.3)  # Mbps
+        self.bandwidth_low_threshold  = rospy.get_param('~bandwidth_low_threshold',   0.1)  # Mbps
 
         # Edge availability tracking — must be set BEFORE subscriber is registered
         # so handle_frame never sees missing attributes if a camera frame arrives
