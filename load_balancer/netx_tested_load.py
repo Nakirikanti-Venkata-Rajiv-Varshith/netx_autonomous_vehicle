@@ -389,10 +389,13 @@ class LoadBalancerNode:
 
         onboard_ok       = (cpu_usage < self.resource_threshold and
                             gpu_usage < 75)
-        bandwidth_sufficient = (upload_speed   >= self.bandwidth_high_threshold and
-                                download_speed >= self.bandwidth_high_threshold)
-        bandwidth_low        = (upload_speed   <= self.bandwidth_low_threshold or
-                                download_speed <  self.bandwidth_low_threshold)
+        # bandwidth_sufficient = (upload_speed   >= self.bandwidth_high_threshold and
+        #                         download_speed >= self.bandwidth_high_threshold)
+        # bandwidth_low        = (upload_speed   <= self.bandwidth_low_threshold or
+        #                         download_speed <  self.bandwidth_low_threshold)
+        # FORCE NETWORK GOOD FOR TESTING
+        bandwidth_sufficient = True
+        bandwidth_low = False
 
         rospy.loginfo(
             f"[DECISION PARAMS] Latency: {latency_sensitivity}, Accuracy: {accuracy_priority}"
