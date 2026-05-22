@@ -395,7 +395,7 @@ class LoadBalancerNode:
         #                         download_speed <  self.bandwidth_low_threshold)
         # FORCE NETWORK GOOD FOR TESTING
         bandwidth_sufficient = True
-        bandwidth_low = False
+        bandwidth_low = True
 
         rospy.loginfo(
             f"[DECISION PARAMS] Latency: {latency_sensitivity}, Accuracy: {accuracy_priority}"
