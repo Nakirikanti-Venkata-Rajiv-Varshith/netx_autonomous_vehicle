@@ -145,6 +145,8 @@ class LoadBalancerNode:
             "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
             "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
         }
+        self.last_fresh_inference = {}
+        self.force_refresh_interval = 0.1
         self.cloud_state = {
             "lane_detection": {"data": None, "timestamp": 0.0, "source": "cloud"},
             "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "cloud"},
@@ -417,10 +419,12 @@ class LoadBalancerNode:
 
                 # Route decision: onboard, offboard (full res), or lower_resolution
                 if decision["route"] == "onboard":
+                    self.last_fresh_inference[app] = time.time()
                     self.forward_to_onboard(app, ros_image, frame_override=frame)
                     onboard_dispatched = True
 
                 elif decision["route"] in ("offboard", "lower_resolution"):
+                    self.last_fresh_inference[app] = time.time()
                     cloud_frame = frame
                     location_label = "edge"
                     if decision["route"] == "lower_resolution":
@@ -569,6 +573,12 @@ class LoadBalancerNode:
         latency_critical = latency_sensitivity == "high"
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
+
+        now = time.time()
+        last_refresh = self.last_fresh_inference.get(app, 0)
+        force_refresh = (now - last_refresh) > self.force_refresh_interval
+        if force_refresh:
+            fresh_required = True
 
         if not self.network_ok or not edge_available:
             rospy.logdebug("[DECISION] network unavailable, forcing onboard")
