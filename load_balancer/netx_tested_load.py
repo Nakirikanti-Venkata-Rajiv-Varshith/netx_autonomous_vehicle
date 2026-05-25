@@ -146,7 +146,7 @@ class LoadBalancerNode:
             "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
         }
         self.last_fresh_inference = {}
-        self.force_refresh_interval = 0.1
+        self.force_refresh_interval = 0.001
         self.cloud_state = {
             "lane_detection": {"data": None, "timestamp": 0.0, "source": "cloud"},
             "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "cloud"},
