@@ -221,7 +221,7 @@ class LoadBalancerNode:
         while self.is_running:
             try:
                 proc = subprocess.Popen(
-                    ["tegrastats","--interval", "100"],
+                    ["tegrastats","--interval", "50"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
@@ -724,8 +724,10 @@ class LoadBalancerNode:
                 ]
             )
             # FIX #4: Reduce CSV flush frequency from 30 to 300 frames to avoid filesystem IO blocking
-            if self.frame_id % 300 == 0:
-                self.csv_file.flush()
+            # if self.frame_id % 300 == 0:
+            #     self.csv_file.flush()
+            if time.time() - self.last_flush > 0.5:
+                self.resource_csv_file.flush()
         except Exception as exc:
             rospy.logerr(f"Failed to write CSV row: {exc}")
 
