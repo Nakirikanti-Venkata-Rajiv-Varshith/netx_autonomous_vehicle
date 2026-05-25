@@ -622,7 +622,7 @@ class LoadBalancerNode:
         elif accuracy_priority == "high" and bandwidth_sufficient:
             route = "offboard"
         else:
-            route = "onboard"
+            route = "offbaord"
 
         # edge_score = 1.0 if route == "onboard" else 0.0
         # cloud_score = 1.0 if route == "offboard" else 0.0
