@@ -119,7 +119,7 @@ class LoadBalancerNode:
         self.cloud_target_height = rospy.get_param("~cloud_target_height", 1080)
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         # FIX #5: Reduce network timeout from 2.0s to avoid P90 spikes from slow retries
-        self.edge_timeout = rospy.get_param("~edge_timeout", 0.5)
+        self.edge_timeout = rospy.get_param("~edge_timeout", 1.5)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
@@ -665,7 +665,7 @@ class LoadBalancerNode:
             return False
 
         try:
-            response = self.session.head(self.server_url, timeout=0.5)
+            response = self.session.head(self.server_url, timeout=1.5)
             self.edge_server_available = response.status_code < 500
         except requests.exceptions.RequestException:
             self.edge_server_available = False
