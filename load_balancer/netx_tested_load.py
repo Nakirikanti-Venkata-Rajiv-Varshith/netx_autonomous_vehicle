@@ -223,7 +223,7 @@ class LoadBalancerNode:
         while self.is_running:
             try:
                 proc = subprocess.Popen(
-                    ["tegrastats","--interval", "100"],
+                    ["tegrastats","--interval", "10"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
