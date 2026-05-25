@@ -35,7 +35,7 @@ APPLICATION_TABLE = {
     "localization": {"latency_sensitivity": "high", "accuracy_priority": "high"},
     "traffic_light_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
     "traffic_sign_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
-    "lane_detection": {"latency_sensitivity": "high", "accuracy_priority": "high"},
+    "lane_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
     "depth_estimation": {"latency_sensitivity": "high", "accuracy_priority": "high"},
     "drowsiness_detection": {"latency_sensitivity": "medium", "accuracy_priority": "high"},
     "drivable_area": {"latency_sensitivity": "high", "accuracy_priority": "high"},
@@ -55,7 +55,7 @@ class LoadBalancerNode:
     def __init__(self, name):
         rospy.logdebug("Load balancer node initializing...")
         # FIX #2: Disable Python GC to avoid random P90 spikes from garbage collection
-        gc.disable()
+        # gc.disable()
         rospy.init_node(name, anonymous=True)
         self.name = name
         self.image = None
@@ -74,9 +74,9 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
-        self.rtt_ms = None
-        self.jitter_ms = 0.0
-        self.network_ok = False
+        # self.rtt_ms = None
+        # self.jitter_ms = 0.0
+        # self.network_ok = False
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
 
         signal.signal(signal.SIGINT, self.shutdown)
@@ -86,10 +86,10 @@ class LoadBalancerNode:
             "gpu_percent": 0.0,
             "ram_percent": 0.0,
             "power_mw": 0.0,
-            "power_avg_mw": 0.0,
+            # "power_avg_mw": 0.0,
         }
         self._resource_lock = threading.Lock()
-        self._power_window = collections.deque(maxlen=15)
+        # self._power_window = collections.deque(maxlen=15)
         threading.Thread(target=self._poll_tegrastats, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
@@ -161,7 +161,7 @@ class LoadBalancerNode:
         # self.cloud_lock = threading.Lock()
         # self.cloud_event = threading.Event()
         # threading.Thread(target=self._cloud_worker, daemon=True).start()
-        threading.Thread(target=self._gc_worker, daemon=True).start()
+        # threading.Thread(target=self._gc_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
             "~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/load_balancer_logs"
@@ -183,19 +183,19 @@ class LoadBalancerNode:
                 "gpu_percent",
                 "power_mw",
                 "ram_percent",
-                "rtt_ms",
-                "jitter_ms",
-                "motion_score",
-                "scene_complexity",
-                "change_score",
-                "edge_score",
-                "cloud_score",
+                # "rtt_ms",
+                # "jitter_ms",
+                # "motion_score",
+                # "scene_complexity",
+                # "change_score",
+                # "edge_score",
+                # "cloud_score",
                 "e2e_latency_sec",
             ]
         )
         rospy.logdebug("CSV logging: %s", self.csv_path)
         # FIX #1: Replace queue with latest-frame strategy
-        self.latest_cloud_request = None
+        # self.latest_cloud_request = None
 
         rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
         rospy.Subscriber(
@@ -349,13 +349,13 @@ class LoadBalancerNode:
         if len(data) >= 2:
             self.upload_speed = float(data[0])
             self.download_speed = float(data[1])
-        if len(data) >= 4:
-            self.rtt_ms = None if data[2] < 0 else float(data[2])
-            self.jitter_ms = float(data[3])
-        if len(data) >= 5:
-            self.network_ok = bool(round(data[4]))
-        else:
-            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+        # if len(data) >= 4:
+        #     self.rtt_ms = None if data[2] < 0 else float(data[2])
+        #     self.jitter_ms = float(data[3])
+        # if len(data) >= 5:
+        #     self.network_ok = bool(round(data[4]))
+        # else:
+        #     self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
@@ -388,7 +388,7 @@ class LoadBalancerNode:
             edge_available = self.check_edge_server_available()
 
             for app in self.applications:
-                profile_snapshot = dict(profile)
+                # profile_snapshot = dict(profile)
                 routing = get_application_table(app)
                 if routing is None:
                     rospy.logwarn(f"Application '{app}' not in table, routing onboard.")
@@ -403,8 +403,8 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile_snapshot,
-                        scores={"edge_score": 0.0, "cloud_score": 0.0},
+                        profile=profile,
+                        # scores={"edge_score": 0.0, "cloud_score": 0.0},
                     )
                     continue
 
@@ -418,8 +418,8 @@ class LoadBalancerNode:
                     self.download_speed,
                     edge_available,
                     app=app,
-                    profile=profile_snapshot,
-                    power_mw=usage["power_avg_mw"],
+                    profile=profile,
+                    power_mw=usage["power_mw"],
                 )
 
                 # Cached publishing disabled
@@ -452,7 +452,7 @@ class LoadBalancerNode:
                         usage["ram_percent"],
                         location_label,
                         capture_time=capture_time,
-                        profile=profile_snapshot,
+                        profile=profile,
                         scores=decision,
                     )
                     cloud_dispatched = True
@@ -468,7 +468,7 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile_snapshot,
+                        profile=profile,
                         scores=decision,
                     )
 
@@ -485,84 +485,84 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile_snapshot,
+                        profile=profile,
                         scores=decision,
                     )
 
         except Exception as exc:
             rospy.logerr(f"Error in handle_frame: {exc}")
 
-    def profile_frame(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
-
-        motion_score = 0.0
-        # Only compute expensive optical flow every N frames to save 30-50% CPU
-        if self.scene_gray is not None and self.profile_skip_counter == 0:
-            # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
-            flow_gray = cv2.resize(gray, (80, 45))
-            flow = cv2.calcOpticalFlowFarneback(
-                self.scene_gray,
-                flow_gray,
-                None,
-                0.5,
-                2,  # Reduced from 3 levels
-                10,  # Reduced from 15 window size
-                2,  # Reduced from 3 iterations
-                5,
-                1.2,
-                0,
-            )
-            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-            motion_score = float(np.mean(magnitude))
-        elif self.scene_embedding is not None:
-            # Use embedding delta as lightweight motion proxy on non-profile frames
-            motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
-
-        # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
-        # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
-        # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
-        if self.profile_skip_counter == 0:
-            edge_density = float(
-                np.count_nonzero(cv2.Canny(gray, 60, 160))
-            ) / float(gray.size)
-
-            texture_density = float(
-                cv2.Laplacian(gray, cv2.CV_32F).var()
-            )
-
-            scene_complexity = clamp(
-                edge_density * 2.5 + texture_density / 2500.0
-            )
-
-            # cache results
-            self.cached_edge_density = edge_density
-            self.cached_texture_density = texture_density
-            self.cached_scene_complexity = scene_complexity
-
-        else:
-            # reuse cached values
-            edge_density = self.cached_edge_density
-            texture_density = self.cached_texture_density
-            scene_complexity = self.cached_scene_complexity
-
-        change_score = 0.0
-        if self.scene_embedding is not None:
-            change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
-
-        # Update scene reference only every N frames to reduce bandwidth
-        if self.profile_skip_counter == 0:
-            self.scene_gray = cv2.resize(gray, (80, 45))
-        
-        self.scene_embedding = embedding
-        self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
-        
-        self.scene_profile = {
-            "motion_score": round(motion_score, 4),
-            "scene_complexity": round(scene_complexity, 4),
-            "change_score": round(change_score, 4),
-        }
-        return self.scene_profile
+    # def profile_frame(self, frame):
+    #     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+    #     embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
+    #
+    #     motion_score = 0.0
+    #     # Only compute expensive optical flow every N frames to save 30-50% CPU
+    #     if self.scene_gray is not None and self.profile_skip_counter == 0:
+    #         # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
+    #         flow_gray = cv2.resize(gray, (80, 45))
+    #         flow = cv2.calcOpticalFlowFarneback(
+    #             self.scene_gray,
+    #             flow_gray,
+    #             None,
+    #             0.5,
+    #             2,  # Reduced from 3 levels
+    #             10,  # Reduced from 15 window size
+    #             2,  # Reduced from 3 iterations
+    #             5,
+    #             1.2,
+    #             0,
+    #         )
+    #         magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+    #         motion_score = float(np.mean(magnitude))
+    #     elif self.scene_embedding is not None:
+    #         # Use embedding delta as lightweight motion proxy on non-profile frames
+    #         motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
+    #
+    #     # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
+    #     # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+    #     # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
+    #     if self.profile_skip_counter == 0:
+    #         edge_density = float(
+    #             np.count_nonzero(cv2.Canny(gray, 60, 160))
+    #         ) / float(gray.size)
+    #
+    #         texture_density = float(
+    #             cv2.Laplacian(gray, cv2.CV_32F).var()
+    #         )
+    #
+    #         scene_complexity = clamp(
+    #             edge_density * 2.5 + texture_density / 2500.0
+    #         )
+    #
+    #         # cache results
+    #         self.cached_edge_density = edge_density
+    #         self.cached_texture_density = texture_density
+    #         self.cached_scene_complexity = scene_complexity
+    #
+    #     else:
+    #         # reuse cached values
+    #         edge_density = self.cached_edge_density
+    #         texture_density = self.cached_texture_density
+    #         scene_complexity = self.cached_scene_complexity
+    #
+    #     change_score = 0.0
+    #     if self.scene_embedding is not None:
+    #         change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
+    #
+    #     # Update scene reference only every N frames to reduce bandwidth
+    #     if self.profile_skip_counter == 0:
+    #         self.scene_gray = cv2.resize(gray, (80, 45))
+    #     
+    #     self.scene_embedding = embedding
+    #     self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
+    #     
+    #     self.scene_profile = {
+    #         "motion_score": round(motion_score, 4),
+    #         "scene_complexity": round(scene_complexity, 4),
+    #         "change_score": round(change_score, 4),
+    #     }
+    #     return self.scene_profile
 
     def decide_processing_location(
         self,
@@ -583,23 +583,23 @@ class LoadBalancerNode:
         latency_critical = latency_sensitivity == "high"
         # Tracker uncertainty logic disabled
         # tracker_uncertainty = self.get_tracker_uncertainty(app)
-        tracker_uncertainty = 0.0
+        # tracker_uncertainty = 0.0
         # Fresh requirement disabled
         # fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
-        fresh_required = False
+        # fresh_required = False
 
-        if not self.network_ok or not edge_available:
-            rospy.logdebug("[DECISION] network unavailable, forcing onboard")
+        if not edge_available:
+            rospy.logdebug("[DECISION] edge unavailable, forcing onboard")
             return {
                 "route": "onboard",
-                "edge_score": 1.0,
-                "cloud_score": 0.0,
-                "publish_cached": False,
-                "force_fresh": True,
+                # "edge_score": 1.0,
+                # "cloud_score": 0.0,
+                # "publish_cached": False,
+                # "force_fresh": True,
             }
 
         # Advanced scoring disabled — use legacy/simple decision heuristics
-        publish_cached = False
+        # publish_cached = False
 
         onboard_ok = (cpu_usage is not None and cpu_usage < self.resource_threshold) and (
             gpu_usage is not None and gpu_usage < 100
@@ -613,7 +613,7 @@ class LoadBalancerNode:
             (upload_speed or 0.0) <= self.bandwidth_low_threshold or (download_speed or 0.0) < self.bandwidth_low_threshold
         )
 
-        if not self.network_ok or not edge_available:
+        if not edge_available:
             route = "onboard"
         elif latency_critical and onboard_ok:
             route = "onboard"
@@ -624,37 +624,32 @@ class LoadBalancerNode:
         else:
             route = "onboard"
 
-        edge_score = 1.0 if route == "onboard" else 0.0
-        cloud_score = 1.0 if route == "offboard" else 0.0
+        # edge_score = 1.0 if route == "onboard" else 0.0
+        # cloud_score = 1.0 if route == "offboard" else 0.0
 
 
-        rospy.logdebug(
-            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
-            app,
-            edge_score,
-            cloud_score,
-            route,
-            fresh_required,
-            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-            self.jitter_ms,
-        )
+        # rospy.logdebug(
+        #     "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
+        #     app,
+        #     edge_score,
+        #     cloud_score,
+        #     route,
+        #     fresh_required,
+        #     "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+        #     self.jitter_ms,
+        # )
         return {
             "route": route,
-            "edge_score": round(edge_score, 4),
-            "cloud_score": round(cloud_score, 4),
-            "publish_cached": publish_cached,
-            "force_fresh": fresh_required,
+            # "edge_score": round(edge_score, 4),
+            # "cloud_score": round(cloud_score, 4),
+            # "publish_cached": publish_cached,
+            # "force_fresh": fresh_required,
         }
 
     def check_edge_server_available(self):
         now = time.time()
         if now - self.last_edge_check < self.edge_check_interval:
-            return self.edge_server_available and self.network_ok
-
-        if not self.network_ok:
-            self.edge_server_available = False
-            self.last_edge_check = now
-            return False
+            return self.edge_server_available
 
         try:
             response = self.session.head(self.server_url, timeout=1.5)
@@ -705,19 +700,19 @@ class LoadBalancerNode:
                     round(gpu, 2) if gpu is not None else "",
                     round(power_mw, 2) if power_mw is not None else "",
                     round(ram, 2) if ram is not None else "",
-                    "" if self.rtt_ms is None else round(self.rtt_ms, 2),
-                    round(self.jitter_ms, 2),
-                    profile.get("motion_score", ""),
-                    profile.get("scene_complexity", ""),
-                    profile.get("change_score", ""),
-                    scores.get("edge_score", ""),
-                    scores.get("cloud_score", ""),
+                    # "" if self.rtt_ms is None else round(self.rtt_ms, 2),
+                    # round(self.jitter_ms, 2),
+                    # profile.get("motion_score", ""),
+                    # profile.get("scene_complexity", ""),
+                    # profile.get("change_score", ""),
+                    # scores.get("edge_score", ""),
+                    # scores.get("cloud_score", ""),
                     e2e,
                 ]
             )
             # FIX #4: Reduce CSV flush frequency from 30 to 300 frames to avoid filesystem IO blocking
-            if self.frame_id % 300 == 0:
-                self.csv_file.flush()
+            # if self.frame_id % 300 == 0:
+            self.csv_file.flush()
         except Exception as exc:
             rospy.logerr(f"Failed to write CSV row: {exc}")
 
@@ -739,11 +734,13 @@ class LoadBalancerNode:
         try:
             # Optimize: Downscale frame BEFORE storing to prevent memory spikes
             # Large numpy arrays cause GC pressure, stale refs, memory bandwidth waste
-            target_width = self.cloud_target_width
+            # target_width = self.cloud_target_width
+            # frame_to_send = frame
+            # if frame.shape[1] > target_width:
+            #     scale = float(target_width) / float(frame.shape[1])
+            #     frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
+            
             frame_to_send = frame
-            if frame.shape[1] > target_width:
-                scale = float(target_width) / float(frame.shape[1])
-                frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
             
             # Prepare payload and send synchronously (bypass async queue)
             dispatch = self._prepare_cloud_payload_optimized(frame_to_send, app, location_label)
@@ -789,16 +786,18 @@ class LoadBalancerNode:
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
         
         # Optimize: Reduce JPEG quality more aggressively for high RTT/jitter
-        min_bandwidth = min(self.upload_speed, self.download_speed)
-        rtt_penalty = (self.rtt_ms or 120.0) / 150.0
+        # min_bandwidth = min(self.upload_speed, self.download_speed)
+        # rtt_penalty = (self.rtt_ms or 120.0) / 150.0
+        # 
+        # if min_bandwidth >= self.bandwidth_high_threshold:
+        #     jpeg_quality = 80
+        # elif min_bandwidth >= self.bandwidth_low_threshold:
+        #     jpeg_quality = 70
+        # else:
+        #     # High latency or low bandwidth: use lower quality
+        #     jpeg_quality = 60 if rtt_penalty > 0.7 else 65
         
-        if min_bandwidth >= self.bandwidth_high_threshold:
-            jpeg_quality = 80
-        elif min_bandwidth >= self.bandwidth_low_threshold:
-            jpeg_quality = 70
-        else:
-            # High latency or low bandwidth: use lower quality
-            jpeg_quality = 60 if rtt_penalty > 0.7 else 65
+        jpeg_quality = 80
         
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
@@ -810,10 +809,10 @@ class LoadBalancerNode:
             "Frame-Height": str(bgr.shape[0]),
             "Client-Timestamp": str(time.time()),
             "detection-flag": app,
-            "Cloud-Transport": "jpeg",
-            "Cloud-Route": location_label,
-            "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
-            "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
+            # "Cloud-Transport": "jpeg",
+            # "Cloud-Route": location_label,
+            # "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
+            # "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
         }
         return {"payload": buffer.tobytes(), "headers": headers}
     
@@ -866,67 +865,67 @@ class LoadBalancerNode:
         msg.data = cv_image.tobytes()
         return msg
 
-    def _cloud_worker(self):
-        # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
-        while self.is_running:
-            self.cloud_event.wait()
-            if not self.is_running:
-                break
-
-            with self.cloud_lock:
-                request_meta = self.latest_cloud_request
-                self.latest_cloud_request = None
-                if request_meta is None:
-                    continue
-
-            try:
-                # Optimize: Prepare payload here in worker thread instead of main thread
-                dispatch = self._prepare_cloud_payload_optimized(
-                    request_meta["frame"],
-                    request_meta["app"],
-                    request_meta["location_label"]
-                )
-                request_meta["headers"] = dispatch["headers"]
-                request_meta["payload"] = dispatch["payload"]
-                request_meta["frame"] = None  # Release frame data
-                
-                response = self.session.post(
-                    self.server_url,
-                    data=request_meta["payload"],
-                    headers=request_meta["headers"],
-                    timeout=self.edge_timeout,
-                )
-                if response.status_code == 200:
-                    self.process_edge_response(response, request_meta["app"], request_meta)
-                    rospy.logdebug("Cloud response received for %s", request_meta["app"])
-                else:
-                    rospy.logwarn(
-                        "Edge server returned %s for %s", response.status_code, request_meta["app"]
-                    )
-                    self.edge_server_available = False
-                    self.publish_edge_fallback(request_meta["app"])
-            except requests.exceptions.RequestException as exc:
-                rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
-                self.edge_server_available = False
-                self.publish_edge_fallback(request_meta["app"])
-            finally:
-                with self.cloud_lock:
-                    if self.latest_cloud_request is None:
-                        self.cloud_event.clear()
-
-                self.log_row(
-                    request_meta["frame_uuid"],
-                    request_meta["app"],
-                    request_meta["scores"].get("route", "offboard"),
-                    request_meta["location_label"],
-                    request_meta["bandwidth"],
-                    request_meta["cpu"],
-                    request_meta["gpu"],
-                    request_meta["power_mw"],
-                    request_meta["ram"],
-                    profile=request_meta["profile"],
-                    scores=request_meta["scores"],
-                )
+    # def _cloud_worker(self):
+    #     # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
+    #     while self.is_running:
+    #         self.cloud_event.wait()
+    #         if not self.is_running:
+    #             break
+    #
+    #         with self.cloud_lock:
+    #             request_meta = self.latest_cloud_request
+    #             self.latest_cloud_request = None
+    #             if request_meta is None:
+    #                 continue
+    #
+    #         try:
+    #             # Optimize: Prepare payload here in worker thread instead of main thread
+    #             dispatch = self._prepare_cloud_payload_optimized(
+    #                 request_meta["frame"],
+    #                 request_meta["app"],
+    #                 request_meta["location_label"]
+    #             )
+    #             request_meta["headers"] = dispatch["headers"]
+    #             request_meta["payload"] = dispatch["payload"]
+    #             request_meta["frame"] = None  # Release frame data
+    #             
+    #             response = self.session.post(
+    #                 self.server_url,
+    #                 data=request_meta["payload"],
+    #                 headers=request_meta["headers"],
+    #                 timeout=self.edge_timeout,
+    #             )
+    #             if response.status_code == 200:
+    #                 self.process_edge_response(response, request_meta["app"], request_meta)
+    #                 rospy.logdebug("Cloud response received for %s", request_meta["app"])
+    #             else:
+    #                 rospy.logwarn(
+    #                     "Edge server returned %s for %s", response.status_code, request_meta["app"]
+    #                 )
+    #                 self.edge_server_available = False
+    #                 self.publish_edge_fallback(request_meta["app"])
+    #         except requests.exceptions.RequestException as exc:
+    #             rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
+    #             self.edge_server_available = False
+    #             self.publish_edge_fallback(request_meta["app"])
+    #         finally:
+    #             with self.cloud_lock:
+    #                 if self.latest_cloud_request is None:
+    #                     self.cloud_event.clear()
+    #
+    #             self.log_row(
+    #                 request_meta["frame_uuid"],
+    #                 request_meta["app"],
+    #                 request_meta["scores"].get("route", "offboard"),
+    #                 request_meta["location_label"],
+    #                 request_meta["bandwidth"],
+    #                 request_meta["cpu"],
+    #                 request_meta["gpu"],
+    #                 request_meta["power_mw"],
+    #                 request_meta["ram"],
+    #                 profile=request_meta["profile"],
+    #                 scores=request_meta["scores"],
+    #             )
 
     def process_edge_response(self, response, app, request_meta=None):
         try:
