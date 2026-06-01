@@ -245,7 +245,7 @@ class YoLov5TRT(object):
 
     def destroy(self):
         # Remove any context from the top of the context stack, deactivating it.
-        # self.ctx.pop()
+        self.ctx.pop()
         pass
 
     def get_raw_image(self, image_path_batch):
