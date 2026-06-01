@@ -35,7 +35,7 @@ APPLICATION_TABLE = {
     "localization": {"latency_sensitivity": "high", "accuracy_priority": "high"},
     "traffic_light_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
     "traffic_sign_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
-    "lane_detection": {"latency_sensitivity": "low", "accuracy_priority": "high"},
+    "lane_detection": {"latency_sensitivity": "high", "accuracy_priority": "high"},
     "depth_estimation": {"latency_sensitivity": "high", "accuracy_priority": "high"},
     "drowsiness_detection": {"latency_sensitivity": "medium", "accuracy_priority": "high"},
     "drivable_area": {"latency_sensitivity": "high", "accuracy_priority": "high"},
@@ -55,7 +55,7 @@ class LoadBalancerNode:
     def __init__(self, name):
         rospy.logdebug("Load balancer node initializing...")
         # FIX #2: Disable Python GC to avoid random P90 spikes from garbage collection
-        # gc.disable()
+        gc.disable()
         rospy.init_node(name, anonymous=True)
         self.name = name
         self.image = None
@@ -74,9 +74,9 @@ class LoadBalancerNode:
         self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
-        # self.rtt_ms = None
-        # self.jitter_ms = 0.0
-        # self.network_ok = False
+        self.rtt_ms = None
+        self.jitter_ms = 0.0
+        self.network_ok = False
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
 
         signal.signal(signal.SIGINT, self.shutdown)
@@ -86,10 +86,10 @@ class LoadBalancerNode:
             "gpu_percent": 0.0,
             "ram_percent": 0.0,
             "power_mw": 0.0,
-            # "power_avg_mw": 0.0,
+            "power_avg_mw": 0.0,
         }
         self._resource_lock = threading.Lock()
-        # self._power_window = collections.deque(maxlen=15)
+        self._power_window = collections.deque(maxlen=15)
         threading.Thread(target=self._poll_tegrastats, daemon=True).start()
 
         self.mecanum_pub = rospy.Publisher("/hiwonder_controller/cmd_vel", Twist, queue_size=1)
@@ -119,7 +119,7 @@ class LoadBalancerNode:
         self.cloud_target_height = rospy.get_param("~cloud_target_height", 1080)
         self.low_res_scale = rospy.get_param("~low_res_scale", 0.65)
         # FIX #5: Reduce network timeout from 2.0s to avoid P90 spikes from slow retries
-        self.edge_timeout = rospy.get_param("~edge_timeout", 1.5)
+        self.edge_timeout = rospy.get_param("~edge_timeout", 0.5)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
         self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 80.0)
@@ -140,28 +140,26 @@ class LoadBalancerNode:
         self.detection_results = []
         self.traffic_sign_results = []
 
-        # Fusion state disabled to match legacy behavior
-        # self.edge_state = {
-        #     "lane_detection": {"data": None, "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
-        #     "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
-        #     "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
-        # }
-        # self.cloud_state = {
-        #     "lane_detection": {"data": None, "timestamp": 0.0, "source": "cloud"},
-        #     "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "cloud"},
-        #     "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "cloud"},
-        # }
-        # self.fused_state = {
-        #     "lane_detection": {"data": None, "timestamp": 0.0, "source": "fused"},
-        #     "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "fused"},
-        #     "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "fused"},
-        # }
+        self.edge_state = {
+            "lane_detection": {"data": None, "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
+            "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
+            "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "onboard", "uncertainty": 1.0},
+        }
+        self.cloud_state = {
+            "lane_detection": {"data": None, "timestamp": 0.0, "source": "cloud"},
+            "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "cloud"},
+            "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "cloud"},
+        }
+        self.fused_state = {
+            "lane_detection": {"data": None, "timestamp": 0.0, "source": "fused"},
+            "collision_avoidance": {"data": [], "timestamp": 0.0, "source": "fused"},
+            "traffic_sign_detection": {"data": [], "timestamp": 0.0, "source": "fused"},
+        }
 
-        # Cloud queue / async worker disabled to use direct synchronous requests (legacy behavior)
-        # self.cloud_lock = threading.Lock()
-        # self.cloud_event = threading.Event()
-        # threading.Thread(target=self._cloud_worker, daemon=True).start()
-        # threading.Thread(target=self._gc_worker, daemon=True).start()
+        self.cloud_lock = threading.Lock()
+        self.cloud_event = threading.Event()
+        threading.Thread(target=self._cloud_worker, daemon=True).start()
+        threading.Thread(target=self._gc_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
             "~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/load_balancer_logs"
@@ -183,19 +181,19 @@ class LoadBalancerNode:
                 "gpu_percent",
                 "power_mw",
                 "ram_percent",
-                # "rtt_ms",
-                # "jitter_ms",
-                # "motion_score",
-                # "scene_complexity",
-                # "change_score",
-                # "edge_score",
-                # "cloud_score",
+                "rtt_ms",
+                "jitter_ms",
+                "motion_score",
+                "scene_complexity",
+                "change_score",
+                "edge_score",
+                "cloud_score",
                 "e2e_latency_sec",
             ]
         )
         rospy.logdebug("CSV logging: %s", self.csv_path)
         # FIX #1: Replace queue with latest-frame strategy
-        # self.latest_cloud_request = None
+        self.latest_cloud_request = None
 
         rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
         rospy.Subscriber(
@@ -311,12 +309,7 @@ class LoadBalancerNode:
 
     def shutdown(self, signum, frame):
         self.is_running = False
-        # Cloud worker disabled; guard cloud_event
-        try:
-            if hasattr(self, "cloud_event") and self.cloud_event is not None:
-                self.cloud_event.set()
-        except Exception:
-            pass
+        self.cloud_event.set()
         rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
             self.csv_file.close()
@@ -349,13 +342,13 @@ class LoadBalancerNode:
         if len(data) >= 2:
             self.upload_speed = float(data[0])
             self.download_speed = float(data[1])
-        # if len(data) >= 4:
-        #     self.rtt_ms = None if data[2] < 0 else float(data[2])
-        #     self.jitter_ms = float(data[3])
-        # if len(data) >= 5:
-        #     self.network_ok = bool(round(data[4]))
-        # else:
-        #     self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+        if len(data) >= 4:
+            self.rtt_ms = None if data[2] < 0 else float(data[2])
+            self.jitter_ms = float(data[3])
+        if len(data) >= 5:
+            self.network_ok = bool(round(data[4]))
+        else:
+            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
@@ -378,17 +371,11 @@ class LoadBalancerNode:
 
         try:
             usage = self._get_resource_usage()
-            # Scene profiling disabled to match legacy behaviour
-            # profile = self.profile_frame(frame)
-            profile = {
-                "motion_score": 0.0,
-                "scene_complexity": 0.0,
-                "change_score": 0.0,
-            }
+            profile = self.profile_frame(frame)
             edge_available = self.check_edge_server_available()
 
             for app in self.applications:
-                # profile_snapshot = dict(profile)
+                profile_snapshot = dict(profile)
                 routing = get_application_table(app)
                 if routing is None:
                     rospy.logwarn(f"Application '{app}' not in table, routing onboard.")
@@ -403,8 +390,8 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile,
-                        # scores={"edge_score": 0.0, "cloud_score": 0.0},
+                        profile=profile_snapshot,
+                        scores={"edge_score": 0.0, "cloud_score": 0.0},
                     )
                     continue
 
@@ -418,13 +405,12 @@ class LoadBalancerNode:
                     self.download_speed,
                     edge_available,
                     app=app,
-                    profile=profile,
-                    power_mw=usage["power_mw"],
+                    profile=profile_snapshot,
+                    power_mw=usage["power_avg_mw"],
                 )
 
-                # Cached publishing disabled
-                # if decision["publish_cached"]:
-                #     self.publish_cached_result(app)
+                if decision["publish_cached"]:
+                    self.publish_cached_result(app)
 
                 onboard_dispatched = False
                 cloud_dispatched = False
@@ -452,7 +438,7 @@ class LoadBalancerNode:
                         usage["ram_percent"],
                         location_label,
                         capture_time=capture_time,
-                        profile=profile,
+                        profile=profile_snapshot,
                         scores=decision,
                     )
                     cloud_dispatched = True
@@ -468,7 +454,7 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile,
+                        profile=profile_snapshot,
                         scores=decision,
                     )
 
@@ -485,84 +471,84 @@ class LoadBalancerNode:
                         usage["gpu_percent"],
                         usage["power_mw"],
                         usage["ram_percent"],
-                        profile=profile,
+                        profile=profile_snapshot,
                         scores=decision,
                     )
 
         except Exception as exc:
             rospy.logerr(f"Error in handle_frame: {exc}")
 
-    # def profile_frame(self, frame):
-    #     gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-    #     embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
-    #
-    #     motion_score = 0.0
-    #     # Only compute expensive optical flow every N frames to save 30-50% CPU
-    #     if self.scene_gray is not None and self.profile_skip_counter == 0:
-    #         # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
-    #         flow_gray = cv2.resize(gray, (80, 45))
-    #         flow = cv2.calcOpticalFlowFarneback(
-    #             self.scene_gray,
-    #             flow_gray,
-    #             None,
-    #             0.5,
-    #             2,  # Reduced from 3 levels
-    #             10,  # Reduced from 15 window size
-    #             2,  # Reduced from 3 iterations
-    #             5,
-    #             1.2,
-    #             0,
-    #         )
-    #         magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-    #         motion_score = float(np.mean(magnitude))
-    #     elif self.scene_embedding is not None:
-    #         # Use embedding delta as lightweight motion proxy on non-profile frames
-    #         motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
-    #
-    #     # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
-    #     # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
-    #     # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
-    #     if self.profile_skip_counter == 0:
-    #         edge_density = float(
-    #             np.count_nonzero(cv2.Canny(gray, 60, 160))
-    #         ) / float(gray.size)
-    #
-    #         texture_density = float(
-    #             cv2.Laplacian(gray, cv2.CV_32F).var()
-    #         )
-    #
-    #         scene_complexity = clamp(
-    #             edge_density * 2.5 + texture_density / 2500.0
-    #         )
-    #
-    #         # cache results
-    #         self.cached_edge_density = edge_density
-    #         self.cached_texture_density = texture_density
-    #         self.cached_scene_complexity = scene_complexity
-    #
-    #     else:
-    #         # reuse cached values
-    #         edge_density = self.cached_edge_density
-    #         texture_density = self.cached_texture_density
-    #         scene_complexity = self.cached_scene_complexity
-    #
-    #     change_score = 0.0
-    #     if self.scene_embedding is not None:
-    #         change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
-    #
-    #     # Update scene reference only every N frames to reduce bandwidth
-    #     if self.profile_skip_counter == 0:
-    #         self.scene_gray = cv2.resize(gray, (80, 45))
-    #     
-    #     self.scene_embedding = embedding
-    #     self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
-    #     
-    #     self.scene_profile = {
-    #         "motion_score": round(motion_score, 4),
-    #         "scene_complexity": round(scene_complexity, 4),
-    #         "change_score": round(change_score, 4),
-    #     }
-    #     return self.scene_profile
+    def profile_frame(self, frame):
+        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
+
+        motion_score = 0.0
+        # Only compute expensive optical flow every N frames to save 30-50% CPU
+        if self.scene_gray is not None and self.profile_skip_counter == 0:
+            # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
+            flow_gray = cv2.resize(gray, (80, 45))
+            flow = cv2.calcOpticalFlowFarneback(
+                self.scene_gray,
+                flow_gray,
+                None,
+                0.5,
+                2,  # Reduced from 3 levels
+                10,  # Reduced from 15 window size
+                2,  # Reduced from 3 iterations
+                5,
+                1.2,
+                0,
+            )
+            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            motion_score = float(np.mean(magnitude))
+        elif self.scene_embedding is not None:
+            # Use embedding delta as lightweight motion proxy on non-profile frames
+            motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
+
+        # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
+        # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
+        if self.profile_skip_counter == 0:
+            edge_density = float(
+                np.count_nonzero(cv2.Canny(gray, 60, 160))
+            ) / float(gray.size)
+
+            texture_density = float(
+                cv2.Laplacian(gray, cv2.CV_32F).var()
+            )
+
+            scene_complexity = clamp(
+                edge_density * 2.5 + texture_density / 2500.0
+            )
+
+            # cache results
+            self.cached_edge_density = edge_density
+            self.cached_texture_density = texture_density
+            self.cached_scene_complexity = scene_complexity
+
+        else:
+            # reuse cached values
+            edge_density = self.cached_edge_density
+            texture_density = self.cached_texture_density
+            scene_complexity = self.cached_scene_complexity
+
+        change_score = 0.0
+        if self.scene_embedding is not None:
+            change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
+
+        # Update scene reference only every N frames to reduce bandwidth
+        if self.profile_skip_counter == 0:
+            self.scene_gray = cv2.resize(gray, (80, 45))
+        
+        self.scene_embedding = embedding
+        self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
+        
+        self.scene_profile = {
+            "motion_score": round(motion_score, 4),
+            "scene_complexity": round(scene_complexity, 4),
+            "change_score": round(change_score, 4),
+        }
+        return self.scene_profile
 
     def decide_processing_location(
         self,
@@ -581,78 +567,105 @@ class LoadBalancerNode:
         profile = profile or self.scene_profile
 
         latency_critical = latency_sensitivity == "high"
-        # Tracker uncertainty logic disabled
-        # tracker_uncertainty = self.get_tracker_uncertainty(app)
-        # tracker_uncertainty = 0.0
-        # Fresh requirement disabled
-        # fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
-        # fresh_required = False
+        tracker_uncertainty = self.get_tracker_uncertainty(app)
+        fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
-        if not edge_available:
-            rospy.logdebug("[DECISION] edge unavailable, forcing onboard")
+        if not self.network_ok or not edge_available:
+            rospy.logdebug("[DECISION] network unavailable, forcing onboard")
             return {
                 "route": "onboard",
-                # "edge_score": 1.0,
-                # "cloud_score": 0.0,
-                # "publish_cached": False,
-                # "force_fresh": True,
+                "edge_score": 1.0,
+                "cloud_score": 0.0,
+                "publish_cached": False,
+                "force_fresh": True,
             }
 
-        # Advanced scoring disabled — use legacy/simple decision heuristics
-        # publish_cached = False
+        cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
+        gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
+        ram_norm = clamp((ram_usage or 0.0) / 100.0)
+        rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
+        jitter_penalty = clamp(self.jitter_ms / 80.0)
+        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
+        low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
+        low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
+        low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
+        high_motion = clamp(1 - low_motion)
+        power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
 
-        onboard_ok = (cpu_usage is not None and cpu_usage < self.resource_threshold) and (
-            gpu_usage is not None and gpu_usage < 100
+        accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
+        high_accuracy_need = clamp(
+            (accuracy_bias * 0.55)
+            + (profile["scene_complexity"] * 0.2)
+            + (profile["change_score"] * 0.1)
+            + (tracker_uncertainty * 0.15)
         )
+        latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
-        bandwidth_sufficient = (
-            (upload_speed or 0.0) >= self.bandwidth_high_threshold and (download_speed or 0.0) >= self.bandwidth_high_threshold
-        )
+        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
+        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
-        bandwidth_low = (
-            (upload_speed or 0.0) <= self.bandwidth_low_threshold or (download_speed or 0.0) < self.bandwidth_low_threshold
-        )
+        if latency_critical:
+            edge_score = clamp(edge_score + 0.2)
+            # cloud_score = clamp(cloud_score - 0.15)
 
-        if not edge_available:
-            route = "onboard"
-        elif latency_critical and onboard_ok:
-            route = "onboard"
-        elif bandwidth_low:
-            route = "lower_resolution"
-        elif accuracy_priority == "high" and bandwidth_sufficient:
-            route = "offboard"
-        else:
-            route = "offbaord"
+        if power_mw and power_mw > self.power_budget_mw:
+            cloud_score = clamp(cloud_score + 0.2)
 
-        # edge_score = 1.0 if route == "onboard" else 0.0
-        # cloud_score = 1.0 if route == "offboard" else 0.0
-
-
-        # rospy.logdebug(
-        #     "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
-        #     app,
-        #     edge_score,
-        #     cloud_score,
-        #     route,
-        #     fresh_required,
-        #     "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-        #     self.jitter_ms,
+        # publish_cached = (
+        #     not fresh_required
+        #     and tracker_uncertainty < 0.35
+        #     and profile["change_score"] < 0.08
+        #     and profile["motion_score"] < 0.5
         # )
+        publish_cached = False
+
+        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
+        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.35:
+            # Poor network: reduce resolution instead of offloading full res
+            route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
+
+        # route = "offboard"
+
+
+        rospy.logdebug(
+            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
+            app,
+            edge_score,
+            cloud_score,
+            route,
+            fresh_required,
+            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+            self.jitter_ms,
+        )
         return {
             "route": route,
-            # "edge_score": round(edge_score, 4),
-            # "cloud_score": round(cloud_score, 4),
-            # "publish_cached": publish_cached,
-            # "force_fresh": fresh_required,
+            "edge_score": round(edge_score, 4),
+            "cloud_score": round(cloud_score, 4),
+            "publish_cached": publish_cached,
+            "force_fresh": fresh_required,
         }
 
     def check_edge_server_available(self):
         now = time.time()
         if now - self.last_edge_check < self.edge_check_interval:
-            return self.edge_server_available
+            return self.edge_server_available and self.network_ok
+
+        if not self.network_ok:
+            self.edge_server_available = False
+            self.last_edge_check = now
+            return False
 
         try:
-            response = self.session.head(self.server_url, timeout=1.5)
+            response = self.session.head(self.server_url, timeout=0.5)
             self.edge_server_available = response.status_code < 500
         except requests.exceptions.RequestException:
             self.edge_server_available = False
@@ -700,19 +713,19 @@ class LoadBalancerNode:
                     round(gpu, 2) if gpu is not None else "",
                     round(power_mw, 2) if power_mw is not None else "",
                     round(ram, 2) if ram is not None else "",
-                    # "" if self.rtt_ms is None else round(self.rtt_ms, 2),
-                    # round(self.jitter_ms, 2),
-                    # profile.get("motion_score", ""),
-                    # profile.get("scene_complexity", ""),
-                    # profile.get("change_score", ""),
-                    # scores.get("edge_score", ""),
-                    # scores.get("cloud_score", ""),
+                    "" if self.rtt_ms is None else round(self.rtt_ms, 2),
+                    round(self.jitter_ms, 2),
+                    profile.get("motion_score", ""),
+                    profile.get("scene_complexity", ""),
+                    profile.get("change_score", ""),
+                    scores.get("edge_score", ""),
+                    scores.get("cloud_score", ""),
                     e2e,
                 ]
             )
             # FIX #4: Reduce CSV flush frequency from 30 to 300 frames to avoid filesystem IO blocking
-            # if self.frame_id % 300 == 0:
-            self.csv_file.flush()
+            if self.frame_id % 300 == 0:
+                self.csv_file.flush()
         except Exception as exc:
             rospy.logerr(f"Failed to write CSV row: {exc}")
 
@@ -734,16 +747,12 @@ class LoadBalancerNode:
         try:
             # Optimize: Downscale frame BEFORE storing to prevent memory spikes
             # Large numpy arrays cause GC pressure, stale refs, memory bandwidth waste
-            # target_width = self.cloud_target_width
-            # frame_to_send = frame
-            # if frame.shape[1] > target_width:
-            #     scale = float(target_width) / float(frame.shape[1])
-            #     frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
-            
+            target_width = self.cloud_target_width
             frame_to_send = frame
+            if frame.shape[1] > target_width:
+                scale = float(target_width) / float(frame.shape[1])
+                frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
             
-            # Prepare payload and send synchronously (bypass async queue)
-            dispatch = self._prepare_cloud_payload_optimized(frame_to_send, app, location_label)
             request_meta = {
                 "app": app,
                 "frame_uuid": frame_uuid,
@@ -756,25 +765,15 @@ class LoadBalancerNode:
                 "location_label": location_label,
                 "profile": profile or dict(self.scene_profile),
                 "scores": scores or {},
-                "headers": dispatch.get("headers"),
-                "payload": dispatch.get("payload"),
+                "frame": frame_to_send,  # Pre-downscaled to reduce memory pressure
+                "headers": None,
+                "payload": None,
             }
 
-            try:
-                response = self.session.post(
-                    self.server_url,
-                    data=request_meta["payload"],
-                    headers=request_meta["headers"],
-                    timeout=self.edge_timeout,
-                )
-                if response.status_code == 200:
-                    self.process_edge_response(response, app, request_meta=request_meta)
-                else:
-                    rospy.logwarn("Edge server returned %s for %s", response.status_code, app)
-                    self.publish_edge_fallback(app)
-            except requests.exceptions.RequestException as exc:
-                rospy.logwarn(f"Edge request failed for {app}: {exc}")
-                self.publish_edge_fallback(app)
+            # FIX #1: Replace queue with latest-frame strategy (standard realtime robotics approach)
+            with self.cloud_lock:
+                self.latest_cloud_request = request_meta
+                self.cloud_event.set()
         except Exception as exc:
             rospy.logwarn(f"Failed to store cloud request for {app}: {exc}")
             self.publish_edge_fallback(app)
@@ -786,18 +785,16 @@ class LoadBalancerNode:
         bgr = cv2.cvtColor(resized, cv2.COLOR_RGB2BGR)
         
         # Optimize: Reduce JPEG quality more aggressively for high RTT/jitter
-        # min_bandwidth = min(self.upload_speed, self.download_speed)
-        # rtt_penalty = (self.rtt_ms or 120.0) / 150.0
-        # 
-        # if min_bandwidth >= self.bandwidth_high_threshold:
-        #     jpeg_quality = 80
-        # elif min_bandwidth >= self.bandwidth_low_threshold:
-        #     jpeg_quality = 70
-        # else:
-        #     # High latency or low bandwidth: use lower quality
-        #     jpeg_quality = 60 if rtt_penalty > 0.7 else 65
+        min_bandwidth = min(self.upload_speed, self.download_speed)
+        rtt_penalty = (self.rtt_ms or 120.0) / 150.0
         
-        jpeg_quality = 80
+        if min_bandwidth >= self.bandwidth_high_threshold:
+            jpeg_quality = 80
+        elif min_bandwidth >= self.bandwidth_low_threshold:
+            jpeg_quality = 70
+        else:
+            # High latency or low bandwidth: use lower quality
+            jpeg_quality = 60 if rtt_penalty > 0.7 else 65
         
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
@@ -809,10 +806,10 @@ class LoadBalancerNode:
             "Frame-Height": str(bgr.shape[0]),
             "Client-Timestamp": str(time.time()),
             "detection-flag": app,
-            # "Cloud-Transport": "jpeg",
-            # "Cloud-Route": location_label,
-            # "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
-            # "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
+            "Cloud-Transport": "jpeg",
+            "Cloud-Route": location_label,
+            "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
+            "Network-Jitter-Ms": str(round(self.jitter_ms, 2)),
         }
         return {"payload": buffer.tobytes(), "headers": headers}
     
@@ -865,67 +862,67 @@ class LoadBalancerNode:
         msg.data = cv_image.tobytes()
         return msg
 
-    # def _cloud_worker(self):
-    #     # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
-    #     while self.is_running:
-    #         self.cloud_event.wait()
-    #         if not self.is_running:
-    #             break
-    #
-    #         with self.cloud_lock:
-    #             request_meta = self.latest_cloud_request
-    #             self.latest_cloud_request = None
-    #             if request_meta is None:
-    #                 continue
-    #
-    #         try:
-    #             # Optimize: Prepare payload here in worker thread instead of main thread
-    #             dispatch = self._prepare_cloud_payload_optimized(
-    #                 request_meta["frame"],
-    #                 request_meta["app"],
-    #                 request_meta["location_label"]
-    #             )
-    #             request_meta["headers"] = dispatch["headers"]
-    #             request_meta["payload"] = dispatch["payload"]
-    #             request_meta["frame"] = None  # Release frame data
-    #             
-    #             response = self.session.post(
-    #                 self.server_url,
-    #                 data=request_meta["payload"],
-    #                 headers=request_meta["headers"],
-    #                 timeout=self.edge_timeout,
-    #             )
-    #             if response.status_code == 200:
-    #                 self.process_edge_response(response, request_meta["app"], request_meta)
-    #                 rospy.logdebug("Cloud response received for %s", request_meta["app"])
-    #             else:
-    #                 rospy.logwarn(
-    #                     "Edge server returned %s for %s", response.status_code, request_meta["app"]
-    #                 )
-    #                 self.edge_server_available = False
-    #                 self.publish_edge_fallback(request_meta["app"])
-    #         except requests.exceptions.RequestException as exc:
-    #             rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
-    #             self.edge_server_available = False
-    #             self.publish_edge_fallback(request_meta["app"])
-    #         finally:
-    #             with self.cloud_lock:
-    #                 if self.latest_cloud_request is None:
-    #                     self.cloud_event.clear()
-    #
-    #             self.log_row(
-    #                 request_meta["frame_uuid"],
-    #                 request_meta["app"],
-    #                 request_meta["scores"].get("route", "offboard"),
-    #                 request_meta["location_label"],
-    #                 request_meta["bandwidth"],
-    #                 request_meta["cpu"],
-    #                 request_meta["gpu"],
-    #                 request_meta["power_mw"],
-    #                 request_meta["ram"],
-    #                 profile=request_meta["profile"],
-    #                 scores=request_meta["scores"],
-    #             )
+    def _cloud_worker(self):
+        # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
+        while self.is_running:
+            self.cloud_event.wait()
+            if not self.is_running:
+                break
+
+            with self.cloud_lock:
+                request_meta = self.latest_cloud_request
+                self.latest_cloud_request = None
+                if request_meta is None:
+                    continue
+
+            try:
+                # Optimize: Prepare payload here in worker thread instead of main thread
+                dispatch = self._prepare_cloud_payload_optimized(
+                    request_meta["frame"],
+                    request_meta["app"],
+                    request_meta["location_label"]
+                )
+                request_meta["headers"] = dispatch["headers"]
+                request_meta["payload"] = dispatch["payload"]
+                request_meta["frame"] = None  # Release frame data
+                
+                response = self.session.post(
+                    self.server_url,
+                    data=request_meta["payload"],
+                    headers=request_meta["headers"],
+                    timeout=self.edge_timeout,
+                )
+                if response.status_code == 200:
+                    self.process_edge_response(response, request_meta["app"], request_meta)
+                    rospy.logdebug("Cloud response received for %s", request_meta["app"])
+                else:
+                    rospy.logwarn(
+                        "Edge server returned %s for %s", response.status_code, request_meta["app"]
+                    )
+                    self.edge_server_available = False
+                    self.publish_edge_fallback(request_meta["app"])
+            except requests.exceptions.RequestException as exc:
+                rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
+                self.edge_server_available = False
+                self.publish_edge_fallback(request_meta["app"])
+            finally:
+                with self.cloud_lock:
+                    if self.latest_cloud_request is None:
+                        self.cloud_event.clear()
+
+                self.log_row(
+                    request_meta["frame_uuid"],
+                    request_meta["app"],
+                    request_meta["scores"].get("route", "offboard"),
+                    request_meta["location_label"],
+                    request_meta["bandwidth"],
+                    request_meta["cpu"],
+                    request_meta["gpu"],
+                    request_meta["power_mw"],
+                    request_meta["ram"],
+                    profile=request_meta["profile"],
+                    scores=request_meta["scores"],
+                )
 
     def process_edge_response(self, response, app, request_meta=None):
         try:
@@ -952,11 +949,7 @@ class LoadBalancerNode:
                 if isinstance(obd_data, str):
                     obd_data = json.loads(obd_data)
                 detections = self.normalize_detections(obd_data.get("detections", []), source="cloud")
-                # Fusion disabled: publish cloud detections directly
-                try:
-                    self.obj_pub.publish(String(data=json.dumps(detections)))
-                except Exception:
-                    pass
+                self.process_cloud_detections("collision_avoidance", detections, request_meta, recv_time)
 
             if "Traffic_detection_model" in result:
                 traffic_data = result["Traffic_detection_model"]
@@ -978,11 +971,7 @@ class LoadBalancerNode:
                                 "source": "cloud",
                             }
                         )
-                # Fusion disabled: publish cloud traffic detections directly
-                try:
-                    self.traffic_pub.publish(String(data=json.dumps(detections)))
-                except Exception:
-                    pass
+                self.process_cloud_detections("traffic_sign_detection", detections, request_meta, recv_time)
         except Exception as exc:
             rospy.logerr(f"Error processing edge response: {exc}")
 
@@ -1011,14 +1000,29 @@ class LoadBalancerNode:
                 "timestamp": recv_time or time.time(),
             }
 
-            # Cloud delay and fusion disabled — use parsed cloud lane directly (legacy behavior)
-            fused_lane = parsed_lane
-            fused_lane["cloud_delay"] = 0.0
+            cloud_delay = 0.0
+            if request_meta is not None:
+                cloud_delay = (recv_time or time.time()) - request_meta["capture_time"]
+
+            latest_edge = self.edge_state["lane_detection"]
+            if cloud_delay > self.cloud_delay_threshold and latest_edge["data"] is not None:
+                fused_lane = dict(latest_edge["data"])
+                fused_lane["source"] = "edge_fallback"
+                fused_lane["cloud_delay"] = round(cloud_delay, 4)
+            elif latest_edge["data"] is not None and (time.time() - latest_edge["timestamp"]) < 0.25:
+                fused_lane = dict(parsed_lane)
+                fused_lane["lane"]["x"] = latest_edge["data"]["lane"].get("x", fused_lane["lane"]["x"])
+                fused_lane["lane"]["angle"] = latest_edge["data"]["lane"].get("angle", fused_lane["lane"]["angle"])
+                fused_lane["source"] = "fused"
+                fused_lane["cloud_delay"] = round(cloud_delay, 4)
+            else:
+                fused_lane = parsed_lane
+                fused_lane["cloud_delay"] = round(cloud_delay, 4)
+
             self.lane_data = fused_lane
             now = time.time()
-            # Fusion state updates disabled
-            # self.cloud_state["lane_detection"] = {"data": parsed_lane, "timestamp": now, "source": "cloud"}
-            # self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
+            self.cloud_state["lane_detection"] = {"data": parsed_lane, "timestamp": now, "source": "cloud"}
+            self.fused_state["lane_detection"] = {"data": fused_lane, "timestamp": now, "source": fused_lane["source"]}
             self.lane_pub.publish(String(data=json.dumps(fused_lane)))
 
             if "binary_image" in lane_data:
@@ -1028,23 +1032,22 @@ class LoadBalancerNode:
         except Exception as exc:
             rospy.logerr(f"Error processing lane data: {exc}")
 
-    # Fusion of cloud detections disabled; process_cloud_detections commented out
-    # def process_cloud_detections(self, app, cloud_detections, request_meta, recv_time):
-    #     cloud_delay = 0.0
-    #     if request_meta is not None:
-    #         cloud_delay = recv_time - request_meta["capture_time"]
-    #
-    #     fused = self.fuse_detections(app, cloud_detections, cloud_delay)
-    #     now = time.time()
-    #     self.cloud_state[app] = {"data": cloud_detections, "timestamp": now, "source": "cloud"}
-    #     self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
-    #
-    #     if app == "collision_avoidance":
-    #         self.detection_results = fused
-    #         self.obj_pub.publish(String(data=json.dumps(fused)))
-    #     elif app == "traffic_sign_detection":
-    #         self.traffic_sign_results = fused
-    #         self.traffic_pub.publish(String(data=json.dumps(fused)))
+    def process_cloud_detections(self, app, cloud_detections, request_meta, recv_time):
+        cloud_delay = 0.0
+        if request_meta is not None:
+            cloud_delay = recv_time - request_meta["capture_time"]
+
+        fused = self.fuse_detections(app, cloud_detections, cloud_delay)
+        now = time.time()
+        self.cloud_state[app] = {"data": cloud_detections, "timestamp": now, "source": "cloud"}
+        self.fused_state[app] = {"data": fused, "timestamp": now, "source": "fused"}
+
+        if app == "collision_avoidance":
+            self.detection_results = fused
+            self.obj_pub.publish(String(data=json.dumps(fused)))
+        elif app == "traffic_sign_detection":
+            self.traffic_sign_results = fused
+            self.traffic_pub.publish(String(data=json.dumps(fused)))
 
     def _publish_base64_image(self, image_data, publisher, label):
         try:
@@ -1065,29 +1068,30 @@ class LoadBalancerNode:
             lane_data = json.loads(msg.data)
             lane_data["source"] = "onboard"
             lane_data["timestamp"] = time.time()
-            # Fusion state updates disabled; publish onboard lane directly
-            try:
-                self.lane_pub.publish(String(data=json.dumps(lane_data)))
-            except Exception:
-                pass
+            self.edge_state["lane_detection"] = {
+                "data": lane_data,
+                "timestamp": lane_data["timestamp"],
+                "source": "onboard",
+                "uncertainty": self.compute_lane_uncertainty(lane_data),
+            }
+            self.fused_state["lane_detection"] = {
+                "data": lane_data,
+                "timestamp": lane_data["timestamp"],
+                "source": "onboard",
+            }
+            self.lane_pub.publish(String(data=json.dumps(lane_data)))
         except Exception as exc:
             rospy.logerr(f"Error in onboard lane callback: {exc}")
 
     def onboard_object_callback(self, msg):
         detections = self.objects_info_to_list(msg, source="onboard")
-        # Tracking/fusion disabled: publish onboard detections directly
-        try:
-            self.obj_pub.publish(String(data=json.dumps(detections)))
-        except Exception:
-            pass
+        self.update_edge_detection_state("collision_avoidance", detections)
+        self.obj_pub.publish(String(data=json.dumps(detections)))
 
     def onboard_traffic_callback(self, msg):
         detections = self.objects_info_to_list(msg, source="onboard")
-        # Tracking/fusion disabled: publish onboard traffic detections directly
-        try:
-            self.traffic_pub.publish(String(data=json.dumps(detections)))
-        except Exception:
-            pass
+        self.update_edge_detection_state("traffic_sign_detection", detections)
+        self.traffic_pub.publish(String(data=json.dumps(detections)))
 
     def objects_info_to_list(self, msg, source="onboard"):
         detections = []
@@ -1116,167 +1120,161 @@ class LoadBalancerNode:
                 )
         return normalized
 
-    # Update edge detection state and tracking disabled
-    # def update_edge_detection_state(self, app, detections):
-    #     now = time.time()
-    #     previous = self.edge_state.get(app, {"data": [], "timestamp": 0.0})
-    #     dt = max(now - previous.get("timestamp", now), 1e-3)
-    #     previous_detections = previous.get("data", [])
-    #
-    #     updated = []
-    #     for detection in detections:
-    #         velocity = [0.0, 0.0]
-    #         previous_match = self.find_best_match(detection, previous_detections)
-    #         if previous_match is not None:
-    #             prev_center = self.box_center(previous_match["box"])
-    #             new_center = self.box_center(detection["box"])
-    #             velocity = [
-    #                 (new_center[0] - prev_center[0]) / dt,
-    #                 (new_center[1] - prev_center[1]) / dt,
-    #             ]
-    #         tracked = dict(detection)
-    #         tracked["velocity"] = [round(velocity[0], 3), round(velocity[1], 3)]
-    #         updated.append(tracked)
-    #
-    #     count_delta = abs(len(detections) - len(previous_detections))
-    #     uncertainty = clamp((count_delta * 0.2) + (self.scene_profile["change_score"] * 0.5))
-    #     self.edge_state[app] = {
-    #         "data": updated,
-    #         "timestamp": now,
-    #         "source": "onboard",
-    #         "uncertainty": uncertainty,
-    #     }
-    #     self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
+    def update_edge_detection_state(self, app, detections):
+        now = time.time()
+        previous = self.edge_state.get(app, {"data": [], "timestamp": 0.0})
+        dt = max(now - previous.get("timestamp", now), 1e-3)
+        previous_detections = previous.get("data", [])
 
-    # Tracker uncertainty disabled
-    # def get_tracker_uncertainty(self, app):
-    #     if app == "lane_detection":
-    #         return self.edge_state["lane_detection"].get("uncertainty", 1.0)
-    #     if app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
-    #         state = self.edge_state["collision_avoidance"]
-    #     elif app in ("traffic_sign_detection", "traffic_light_detection"):
-    #         state = self.edge_state["traffic_sign_detection"]
-    #     else:
-    #         return 0.5
-    #
-    #     age = time.time() - state.get("timestamp", 0.0)
-    #     return clamp(state.get("uncertainty", 0.5) + min(age / 0.6, 1.0) * 0.5)
+        updated = []
+        for detection in detections:
+            velocity = [0.0, 0.0]
+            previous_match = self.find_best_match(detection, previous_detections)
+            if previous_match is not None:
+                prev_center = self.box_center(previous_match["box"])
+                new_center = self.box_center(detection["box"])
+                velocity = [
+                    (new_center[0] - prev_center[0]) / dt,
+                    (new_center[1] - prev_center[1]) / dt,
+                ]
+            tracked = dict(detection)
+            tracked["velocity"] = [round(velocity[0], 3), round(velocity[1], 3)]
+            updated.append(tracked)
 
-    # Lane uncertainty computation disabled
-    # def compute_lane_uncertainty(self, lane_data):
-    #     lane_x = lane_data.get("lane", {}).get("x", -1)
-    #     lane_angle = lane_data.get("lane", {}).get("angle", 0.0)
-    #     missing_lane = 1.0 if lane_x < 0 else 0.0
-    #     angle_penalty = min(abs(lane_angle or 0.0) / 90.0, 1.0) * 0.25
-    #     return clamp(missing_lane + angle_penalty)
+        count_delta = abs(len(detections) - len(previous_detections))
+        uncertainty = clamp((count_delta * 0.2) + (self.scene_profile["change_score"] * 0.5))
+        self.edge_state[app] = {
+            "data": updated,
+            "timestamp": now,
+            "source": "onboard",
+            "uncertainty": uncertainty,
+        }
+        self.fused_state[app] = {"data": updated, "timestamp": now, "source": "onboard"}
+
+    def get_tracker_uncertainty(self, app):
+        if app == "lane_detection":
+            return self.edge_state["lane_detection"].get("uncertainty", 1.0)
+        if app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
+            state = self.edge_state["collision_avoidance"]
+        elif app in ("traffic_sign_detection", "traffic_light_detection"):
+            state = self.edge_state["traffic_sign_detection"]
+        else:
+            return 0.5
+
+        age = time.time() - state.get("timestamp", 0.0)
+        return clamp(state.get("uncertainty", 0.5) + min(age / 0.6, 1.0) * 0.5)
+
+    def compute_lane_uncertainty(self, lane_data):
+        lane_x = lane_data.get("lane", {}).get("x", -1)
+        lane_angle = lane_data.get("lane", {}).get("angle", 0.0)
+        missing_lane = 1.0 if lane_x < 0 else 0.0
+        angle_penalty = min(abs(lane_angle or 0.0) / 90.0, 1.0) * 0.25
+        return clamp(missing_lane + angle_penalty)
 
     def publish_cached_result(self, app):
-        # Cached publishing/ fusion state disabled; safe no-op implementation
-        try:
-            if hasattr(self, "fused_state"):
-                if app == "lane_detection":
-                    state = self.fused_state.get("lane_detection", {})
-                    if state.get("data") is not None and (time.time() - state.get("timestamp", 0.0)) < 0.25:
-                        self.lane_pub.publish(String(data=json.dumps(state["data"])))
-                elif app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
-                    state = self.fused_state.get("collision_avoidance", {})
-                    if (time.time() - state.get("timestamp", 0.0)) < 0.25:
-                        self.obj_pub.publish(String(data=json.dumps(state.get("data", []))))
-                elif app in ("traffic_sign_detection", "traffic_light_detection"):
-                    state = self.fused_state.get("traffic_sign_detection", {})
-                    if (time.time() - state.get("timestamp", 0.0)) < 0.25:
-                        self.traffic_pub.publish(String(data=json.dumps(state.get("data", []))))
-        except Exception:
-            pass
+        if app == "lane_detection":
+            state = self.fused_state["lane_detection"]
+            if state["data"] is not None and (time.time() - state["timestamp"]) < 0.25:
+                self.lane_pub.publish(String(data=json.dumps(state["data"])))
+        elif app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
+            state = self.fused_state["collision_avoidance"]
+            if (time.time() - state["timestamp"]) < 0.25:
+                self.obj_pub.publish(String(data=json.dumps(state["data"])))
+        elif app in ("traffic_sign_detection", "traffic_light_detection"):
+            state = self.fused_state["traffic_sign_detection"]
+            if (time.time() - state["timestamp"]) < 0.25:
+                self.traffic_pub.publish(String(data=json.dumps(state["data"])))
 
     def publish_edge_fallback(self, app):
-        # Edge fallback publishes disabled (fusion/edge state removed). Attempt best-effort no-op.
-        try:
-            rospy.logdebug(f"publish_edge_fallback called for {app} but edge-state is disabled")
-        except Exception:
-            pass
+        if app == "lane_detection":
+            state = self.edge_state["lane_detection"]
+            if state["data"] is not None:
+                self.lane_pub.publish(String(data=json.dumps(state["data"])))
+        elif app in ("collision_avoidance", "collision_detection", "pedestrian_avoidance", "pedestrian_detection"):
+            state = self.edge_state["collision_avoidance"]
+            self.obj_pub.publish(String(data=json.dumps(state["data"])))
+        elif app in ("traffic_sign_detection", "traffic_light_detection"):
+            state = self.edge_state["traffic_sign_detection"]
+            self.traffic_pub.publish(String(data=json.dumps(state["data"])))
 
 
 
-    # find_best_match disabled
-    # def find_best_match(self, detection, candidates):
-    #     best = None
-    #     best_score = 0.0
-    #     for candidate in candidates:
-    #         iou = self.compute_iou(detection["box"], candidate["box"])
-    #         if detection["class_name"] == candidate["class_name"]:
-    #             iou += 0.1
-    #         if iou > best_score:
-    #             best_score = iou
-    #             best = candidate
-    #     return best if best_score > 0.05 else None
+    def find_best_match(self, detection, candidates):
+        best = None
+        best_score = 0.0
+        for candidate in candidates:
+            iou = self.compute_iou(detection["box"], candidate["box"])
+            if detection["class_name"] == candidate["class_name"]:
+                iou += 0.1
+            if iou > best_score:
+                best_score = iou
+                best = candidate
+        return best if best_score > 0.05 else None
 
-    # fuse_detections disabled
-    # def fuse_detections(self, app, cloud_detections, cloud_delay):
-    #     if app == "collision_avoidance":
-    #         edge_state = self.edge_state["collision_avoidance"]
-    #     else:
-    #         edge_state = self.edge_state["traffic_sign_detection"]
+    def fuse_detections(self, app, cloud_detections, cloud_delay):
+        if app == "collision_avoidance":
+            edge_state = self.edge_state["collision_avoidance"]
+        else:
+            edge_state = self.edge_state["traffic_sign_detection"]
 
-    #     edge_detections = edge_state.get("data", [])
-    #     edge_age = time.time() - edge_state.get("timestamp", 0.0)
-    #     if cloud_delay > self.cloud_delay_threshold and edge_detections and edge_age < 0.4:
-    #         return edge_detections
+        edge_detections = edge_state.get("data", [])
+        edge_age = time.time() - edge_state.get("timestamp", 0.0)
+        if cloud_delay > self.cloud_delay_threshold and edge_detections and edge_age < 0.4:
+            return edge_detections
 
-    #     fused = []
-    #     used_edge = set()
-    #     for cloud in cloud_detections:
-    #         best_index = None
-    #         best_score = -1.0
-    #         projected_box = cloud["box"]
+        fused = []
+        used_edge = set()
+        for cloud in cloud_detections:
+            best_index = None
+            best_score = -1.0
+            projected_box = cloud["box"]
 
-    #         for index, edge in enumerate(edge_detections):
-    #             velocity = edge.get("velocity", [0.0, 0.0])
-    #             candidate_box = self.project_box(edge["box"], velocity, cloud_delay)
-    #             iou = self.compute_iou(candidate_box, cloud["box"])
-    #             center_penalty = self.center_distance(candidate_box, cloud["box"]) / 300.0
-    #             match_score = iou - center_penalty
-    #             if edge["class_name"] == cloud["class_name"]:
-    #                 match_score += 0.1
-    #             if match_score > best_score:
-    #                 best_score = match_score
-    #                 best_index = index
-    #                 projected_box = candidate_box
+            for index, edge in enumerate(edge_detections):
+                velocity = edge.get("velocity", [0.0, 0.0])
+                candidate_box = self.project_box(edge["box"], velocity, cloud_delay)
+                iou = self.compute_iou(candidate_box, cloud["box"])
+                center_penalty = self.center_distance(candidate_box, cloud["box"]) / 300.0
+                match_score = iou - center_penalty
+                if edge["class_name"] == cloud["class_name"]:
+                    match_score += 0.1
+                if match_score > best_score:
+                    best_score = match_score
+                    best_index = index
+                    projected_box = candidate_box
 
-    #         if best_index is not None and best_score > -0.05:
-    #             edge = edge_detections[best_index]
-    #             used_edge.add(best_index)
-    #             fused.append(
-    #                 {
-    #                     "class_name": cloud["class_name"],
-    #                     "box": [int(v) for v in projected_box],
-    #                     "score": max(float(cloud["score"]), float(edge.get("score", 0.0))),
-    #                     "source": "fused",
-    #                     "cloud_delay": round(cloud_delay, 4),
-    #                 }
-    #             )
-    #         else:
-    #             cloud_copy = dict(cloud)
-    #             cloud_copy["cloud_delay"] = round(cloud_delay, 4)
-    #             fused.append(cloud_copy)
+            if best_index is not None and best_score > -0.05:
+                edge = edge_detections[best_index]
+                used_edge.add(best_index)
+                fused.append(
+                    {
+                        "class_name": cloud["class_name"],
+                        "box": [int(v) for v in projected_box],
+                        "score": max(float(cloud["score"]), float(edge.get("score", 0.0))),
+                        "source": "fused",
+                        "cloud_delay": round(cloud_delay, 4),
+                    }
+                )
+            else:
+                cloud_copy = dict(cloud)
+                cloud_copy["cloud_delay"] = round(cloud_delay, 4)
+                fused.append(cloud_copy)
 
-    #     for index, edge in enumerate(edge_detections):
-    #         if index not in used_edge and edge_age < 0.25:
-    #             edge_copy = dict(edge)
-    #             edge_copy["source"] = "edge_fallback"
-    #             edge_copy["cloud_delay"] = round(cloud_delay, 4)
-    #             fused.append(edge_copy)
+        for index, edge in enumerate(edge_detections):
+            if index not in used_edge and edge_age < 0.25:
+                edge_copy = dict(edge)
+                edge_copy["source"] = "edge_fallback"
+                edge_copy["cloud_delay"] = round(cloud_delay, 4)
+                fused.append(edge_copy)
 
-    #     return fused
+        return fused
 
-    # @staticmethod
-    # def box_center(box):
-    #     return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
+    @staticmethod
+    def box_center(box):
+        return ((box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0)
 
     def center_distance(self, box_a, box_b):
-        # Compute centers inline to avoid dependency on commented box_center
-        center_a = ((box_a[0] + box_a[2]) / 2.0, (box_a[1] + box_a[3]) / 2.0)
-        center_b = ((box_b[0] + box_b[2]) / 2.0, (box_b[1] + box_b[3]) / 2.0)
+        center_a = self.box_center(box_a)
+        center_b = self.box_center(box_b)
         return ((center_a[0] - center_b[0]) ** 2 + (center_a[1] - center_b[1]) ** 2) ** 0.5
 
     def project_box(self, box, velocity, dt):
