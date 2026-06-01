@@ -77,6 +77,10 @@ class LoadBalancerNode:
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
+        # Experiment mode: simulate network flapping for testing
+        self.experiment_mode = True
+        self.experiment_start_time = time.time()
+        threading.Thread(target=self._network_experiment_worker, daemon=True).start()
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
 
         signal.signal(signal.SIGINT, self.shutdown)
@@ -276,6 +280,28 @@ class LoadBalancerNode:
         while self.is_running:
             time.sleep(5)
             gc.collect()
+
+    def _network_experiment_worker(self):
+        """Simulate network up/down cycles for experiment mode.
+
+        Toggles `self.network_ok` ON for 15s, OFF for 15s.
+        """
+        while self.is_running:
+            try:
+                elapsed = int(time.time() - self.experiment_start_time)
+
+                # 15s ON, 15s OFF
+                cycle = (elapsed // 15) % 2
+
+                if cycle == 0:
+                    self.network_ok = True
+                else:
+                    self.network_ok = False
+
+                time.sleep(1)
+            except Exception:
+                # Swallow exceptions to keep worker running
+                time.sleep(1)
 
     def _get_resource_usage(self):
         with self._resource_lock:
