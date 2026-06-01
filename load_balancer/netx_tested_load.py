@@ -363,18 +363,42 @@ class LoadBalancerNode:
         except Exception as exc:
             rospy.logerr(f"Error in image_callback: {exc}")
 
+    # def bandwidth_callback(self, msg):
+    #     data = list(msg.data)
+    #     if len(data) >= 2:
+    #         self.upload_speed = float(data[0])
+    #         self.download_speed = float(data[1])
+    #     if len(data) >= 4:
+    #         self.rtt_ms = None if data[2] < 0 else float(data[2])
+    #         self.jitter_ms = float(data[3])
+    #     if len(data) >= 5:
+    #         self.network_ok = bool(round(data[4]))
+    #     else:
+    #         self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+
     def bandwidth_callback(self, msg):
         data = list(msg.data)
+
         if len(data) >= 2:
             self.upload_speed = float(data[0])
             self.download_speed = float(data[1])
+
         if len(data) >= 4:
             self.rtt_ms = None if data[2] < 0 else float(data[2])
             self.jitter_ms = float(data[3])
+
+    # EXPERIMENT MODE:
+    # Do NOT allow bandwidth topic to overwrite network_ok
+        if self.experiment_mode:
+            return
+
         if len(data) >= 5:
             self.network_ok = bool(round(data[4]))
         else:
-            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
+            self.network_ok = (
+                self.upload_speed > 0.0
+                or self.download_speed > 0.0
+            )
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
@@ -596,6 +620,12 @@ class LoadBalancerNode:
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
+
+        rospy.logwarn(
+            f"[DECISION] network_ok={self.network_ok} "
+            f"edge_available={edge_available}"
+        )
+        
         if not self.network_ok or not edge_available:
             rospy.logdebug("[DECISION] network unavailable, forcing onboard")
             return {
