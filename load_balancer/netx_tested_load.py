@@ -406,9 +406,6 @@ class LoadBalancerNode:
             return
         self.last_processing_time = now
 
-        if not self.network_ok:
-            self.mecanum_pub.publish(Twist())  # stop vehicle
-            return
 
         self.frame_id += 1
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
