@@ -78,14 +78,33 @@ class Yolov5Node:
         return TriggerResponse(success=True)
 
     def traffic_callback(self, ros_image):
+        rospy.loginfo(
+            "traffic_callback received frame | encoding=%s | size=%dx%d",
+            ros_image.encoding,
+            ros_image.width,
+            ros_image.height,
+        )
+
         self.traffic_image = self.ros_to_bgr_image(ros_image)
         self.traffic_seq += 1
 
+        rospy.loginfo("traffic_seq=%d", self.traffic_seq)
+
     def object_callback(self, ros_image):
+        rospy.loginfo(
+            "object_callback received frame | encoding=%s | size=%dx%d",
+            ros_image.encoding,
+            ros_image.width,
+            ros_image.height,
+        )
+
         self.object_image = self.ros_to_bgr_image(ros_image)
         self.object_seq += 1
 
+        rospy.loginfo("object_seq=%d", self.object_seq)
+
     def ros_to_bgr_image(self, ros_image):
+        rospy.loginfo("received image encoding=%s", ros_image.encoding)
         if ros_image.encoding == "rgb8":
             rgb = np.ndarray(
                 shape=(ros_image.height, ros_image.width, 3), dtype=np.uint8, buffer=ros_image.data
@@ -103,9 +122,15 @@ class Yolov5Node:
         rospy.loginfo("shutdown")
 
     def traffic_funtion(self, image):
+        rospy.loginfo("traffic_funtion called")
         infer_image = image.copy()
         objects_info = []
         boxes, scores, classid = self.yolov5.infer(infer_image)
+
+        rospy.loginfo(
+            "traffic inference complete | boxes=%d",
+            len(boxes)
+        )
         for box, cls_conf, cls_id in zip(boxes, scores, classid):
             color = colors(cls_id, True)
 
@@ -130,9 +155,15 @@ class Yolov5Node:
         rospy.loginfo("yolov5 detect traffic sign: %d", len(boxes))
 
     def object_funtion(self, image):
+        rospy.loginfo("object_funtion called")
         infer_image = image.copy()
         objects_info = []
         boxes, scores, classid = self.yolov5_od.infer(infer_image)
+
+        rospy.loginfo(
+            "object inference complete | boxes=%d",
+            len(boxes)
+        )
         for box, cls_conf, cls_id in zip(boxes, scores, classid):
             color = colors(cls_id, True)
 
@@ -171,6 +202,13 @@ class Yolov5Node:
     def image_proc(self):
         rospy.loginfo("image_proc started, waiting for images...")
         while self.running and not rospy.is_shutdown():
+            rospy.loginfo_throttle(
+                5,
+                "image_proc alive | start=%s traffic=%s object=%s",
+                self.start,
+                self.traffic_image is not None,
+                self.object_image is not None,
+            )
             if not self.start:
                 rospy.sleep(0.02)
                 continue
@@ -179,12 +217,22 @@ class Yolov5Node:
                 if self.traffic_image is not None:
                     image = self.traffic_image.copy()
                     self.traffic_image = None
+                    rospy.loginfo(
+                        "processing traffic frame | seq=%d frame_skip=%d",
+                        self.traffic_seq,
+                        self.frame_skip,
+                    )
                     if self.traffic_seq % self.frame_skip == 0 or not self.maybe_publish_cached("traffic"):
                         self.traffic_funtion(image)
 
                 if self.object_image is not None:
                     image = self.object_image.copy()
                     self.object_image = None
+                    rospy.loginfo(
+                        "processing object frame | seq=%d frame_skip=%d",
+                        self.object_seq,
+                        self.frame_skip,
+                    )
                     if self.object_seq % self.frame_skip == 0 or not self.maybe_publish_cached("object"):
                         self.object_funtion(image)
             except BaseException as exc:
