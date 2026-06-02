@@ -293,8 +293,8 @@ class LoadBalancerNode:
             try:
                 rospy.logwarn("CALLING YOLO START SERVICE")
                 rospy.ServiceProxy("/yolov5_lb_setb/start", Trigger)()
-            except Exception:
-                rospy.logwarn("Failed to start YOLOv5 service")
+            except Exception as e:
+                rospy.logerr(f"Failed to start YOLOv5 service: {e}")
 
     def initialize_servos(self):
         while not rospy.is_shutdown():
