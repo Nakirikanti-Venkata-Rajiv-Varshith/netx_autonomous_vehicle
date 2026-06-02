@@ -678,19 +678,19 @@ class LoadBalancerNode:
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.35:
+            # Poor network: reduce resolution instead of offloading full res
+            route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
 
-        route = "offboard"
+        # route = "offboard"
 
 
         rospy.logdebug(
@@ -961,8 +961,8 @@ class LoadBalancerNode:
             except requests.exceptions.RequestException as exc:
                 rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
                 self.edge_server_available = False
-                # self.publish_edge_fallback(request_meta["app"])
-                self.mecanum_pub.publish(Twist())
+                self.publish_edge_fallback(request_meta["app"])
+                # self.mecanum_pub.publish(Twist())
             finally:
                 with self.cloud_lock:
                     if self.latest_cloud_request is None:
