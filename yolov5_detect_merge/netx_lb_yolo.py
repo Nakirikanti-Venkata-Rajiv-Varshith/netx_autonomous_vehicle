@@ -201,6 +201,7 @@ class Yolov5Node:
 
     def image_proc(self):
         rospy.loginfo("image_proc started, waiting for images...")
+        rospy.logwarn_throttle(2, f"YOLO start={self.start}")
         while self.running and not rospy.is_shutdown():
             rospy.loginfo_throttle(
                 5,
