@@ -77,10 +77,6 @@ class LoadBalancerNode:
         self.rtt_ms = None
         self.jitter_ms = 0.0
         self.network_ok = False
-        # Experiment mode: simulate network flapping for testing
-        self.experiment_mode = True
-        self.experiment_start_time = time.time()
-        threading.Thread(target=self._network_experiment_worker, daemon=True).start()
         rospy.Subscriber("/network/bandwidth", Float32MultiArray, self.bandwidth_callback)
 
         signal.signal(signal.SIGINT, self.shutdown)
@@ -281,28 +277,6 @@ class LoadBalancerNode:
             time.sleep(5)
             gc.collect()
 
-    def _network_experiment_worker(self):
-        """Simulate network up/down cycles for experiment mode.
-
-        Toggles `self.network_ok` ON for 15s, OFF for 15s.
-        """
-        while self.is_running:
-            try:
-                elapsed = int(time.time() - self.experiment_start_time)
-
-                # 15s ON, 15s OFF
-                cycle = (elapsed // 15) % 2
-
-                if cycle == 0:
-                    self.network_ok = True
-                else:
-                    self.network_ok = False
-
-                time.sleep(1)
-            except Exception:
-                # Swallow exceptions to keep worker running
-                time.sleep(1)
-
     def _get_resource_usage(self):
         with self._resource_lock:
             return dict(self._resource_cache)
@@ -363,49 +337,24 @@ class LoadBalancerNode:
         except Exception as exc:
             rospy.logerr(f"Error in image_callback: {exc}")
 
-    # def bandwidth_callback(self, msg):
-    #     data = list(msg.data)
-    #     if len(data) >= 2:
-    #         self.upload_speed = float(data[0])
-    #         self.download_speed = float(data[1])
-    #     if len(data) >= 4:
-    #         self.rtt_ms = None if data[2] < 0 else float(data[2])
-    #         self.jitter_ms = float(data[3])
-    #     if len(data) >= 5:
-    #         self.network_ok = bool(round(data[4]))
-    #     else:
-    #         self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
-
     def bandwidth_callback(self, msg):
         data = list(msg.data)
-
         if len(data) >= 2:
             self.upload_speed = float(data[0])
             self.download_speed = float(data[1])
-
         if len(data) >= 4:
             self.rtt_ms = None if data[2] < 0 else float(data[2])
             self.jitter_ms = float(data[3])
-
-    # EXPERIMENT MODE:
-    # Do NOT allow bandwidth topic to overwrite network_ok
-        if self.experiment_mode:
-            return
-
         if len(data) >= 5:
             self.network_ok = bool(round(data[4]))
         else:
-            self.network_ok = (
-                self.upload_speed > 0.0
-                or self.download_speed > 0.0
-            )
+            self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
 
     def handle_frame(self, frame, ros_image):
         now = time.time()
         if now - self.last_processing_time < self.min_processing_interval:
             return
         self.last_processing_time = now
-
 
         self.frame_id += 1
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
@@ -621,12 +570,6 @@ class LoadBalancerNode:
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
 
-
-        rospy.logwarn(
-            f"[DECISION] network_ok={self.network_ok} "
-            f"edge_available={edge_available}"
-        )
-        
         if not self.network_ok or not edge_available:
             rospy.logdebug("[DECISION] network unavailable, forcing onboard")
             return {
@@ -690,7 +633,7 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        route = "onboard"
 
 
         rospy.logdebug(
@@ -961,8 +904,7 @@ class LoadBalancerNode:
             except requests.exceptions.RequestException as exc:
                 rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
                 self.edge_server_available = False
-                # self.publish_edge_fallback(request_meta["app"])
-                self.mecanum_pub.publish(Twist())
+                self.publish_edge_fallback(request_meta["app"])
             finally:
                 with self.cloud_lock:
                     if self.latest_cloud_request is None:
