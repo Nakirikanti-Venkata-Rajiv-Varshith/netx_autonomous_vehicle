@@ -57,6 +57,7 @@ class LoadBalancerNode:
         # FIX #2: Disable Python GC to avoid random P90 spikes from garbage collection
         gc.disable()
         rospy.init_node(name, anonymous=True)
+        rospy.logwarn("######## ✅ LOAD_BALANCER_SETB.PY IS RUNNING ########")
         self.name = name
         self.image = None
         self.is_running = True
