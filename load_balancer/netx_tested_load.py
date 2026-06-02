@@ -690,12 +690,7 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        # route = "offboard"
-
-        if(self.network_ok):
-            route = "onboard"
-        else:
-            route = "offboard"
+        route = "offboard"
 
 
         rospy.logdebug(
@@ -966,7 +961,8 @@ class LoadBalancerNode:
             except requests.exceptions.RequestException as exc:
                 rospy.logwarn(f"Edge request failed for {request_meta['app']}: {exc}")
                 self.edge_server_available = False
-                self.publish_edge_fallback(request_meta["app"])
+                # self.publish_edge_fallback(request_meta["app"])
+                self.mecanum_pub.publish(Twist())
             finally:
                 with self.cloud_lock:
                     if self.latest_cloud_request is None:
