@@ -282,19 +282,64 @@ class LoadBalancerNode:
         with self._resource_lock:
             return dict(self._resource_cache)
 
+    # def wait_for_services(self):
+    #     if not rospy.get_param("~only_line_follow", False):
+    #         while not rospy.is_shutdown():
+    #             try:
+    #                 if rospy.get_param("/yolov5_lb/init_finish"):
+    #                     break
+    #             except Exception:
+    #                 rospy.sleep(0.1)
+    #         try:
+    #             rospy.logwarn("CALLING YOLO START SERVICE")
+    #             rospy.ServiceProxy("/yolov5_lb_setb/start", Trigger)()
+    #         except Exception as e:
+    #             rospy.logerr(f"Failed to start YOLOv5 service: {e}")
+
+
     def wait_for_services(self):
         if not rospy.get_param("~only_line_follow", False):
+
+            # Wait for YOLO node to finish initialization
+            rospy.logwarn("WAITING FOR YOLO INIT")
+
             while not rospy.is_shutdown():
                 try:
-                    if rospy.get_param("/yolov5_lb/init_finish"):
-                        break
-                except Exception:
-                    rospy.sleep(0.1)
+                    if rospy.has_param("/yolov5_lb_setb/init_finish"):
+                        if rospy.get_param("/yolov5_lb_setb/init_finish"):
+                            rospy.logwarn("YOLO INIT_FINISH DETECTED")
+                            break
+                except Exception as e:
+                    rospy.logwarn_throttle(5, f"Waiting for YOLO init: {e}")
+
+                rospy.sleep(0.1)
+
+            # Wait for YOLO start service
             try:
-                rospy.logwarn("CALLING YOLO START SERVICE")
-                rospy.ServiceProxy("/yolov5_lb_setb/start", Trigger)()
+                rospy.logwarn("WAITING FOR YOLO START SERVICE")
+
+                rospy.wait_for_service(
+                    "/yolov5_lb_setb/start",
+                    timeout=15
+                )
+
+                rospy.logwarn("YOLO START SERVICE FOUND")
+
+                start_srv = rospy.ServiceProxy(
+                    "/yolov5_lb_setb/start",
+                    Trigger
+                )
+
+                result = start_srv()
+
+                rospy.logwarn(
+                    f"YOLO START RESULT: success={result.success}"
+                )
+
             except Exception as e:
-                rospy.logerr(f"Failed to start YOLOv5 service: {e}")
+                rospy.logerr(
+                    f"YOLO START FAILED: {e}"
+                )
 
     def initialize_servos(self):
         while not rospy.is_shutdown():
