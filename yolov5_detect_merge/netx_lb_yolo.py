@@ -22,7 +22,7 @@ class Yolov5Node:
         rospy.init_node(name, anonymous=True)
         self.name = name
         self.running = True
-        self.start = False
+        self.start = True
 
         signal.signal(signal.SIGINT, self.shutdown)
 
