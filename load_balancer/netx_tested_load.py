@@ -680,7 +680,7 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        route = "onboard"
 
 
         rospy.logdebug(
