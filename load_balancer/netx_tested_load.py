@@ -648,6 +648,15 @@ class LoadBalancerNode:
         )
         latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
+        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+
+        overload_bonus = 0.0
+
+        if resource_pressure > 0.85:
+            overload_bonus = (resource_pressure - 0.85) / 0.15
+            cloud_score += overload_bonus * 0.15
+
+
         edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
         cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
