@@ -104,7 +104,7 @@ class ResourceStressor:
         target_memory = int(available_memory * (target_utilization / 100.0))
         
         # Be more conservative to avoid OOM
-        target_memory = int(target_memory * 0.8)  # Use 80% of target
+        target_memory = int(target_memory * 0.90)  # Use 80% of target
         
         print(f"Target memory: {target_memory / (1024**3):.2f} GB")
         
@@ -204,7 +204,8 @@ class ResourceStressor:
             while time.time() < end_time and not self.stop_event.is_set():
                 try:
                     # Use smaller iterations to prevent timeout
-                    iterations = min(10 + (iteration % 20), 30)
+                    # iterations = min(10 + (iteration % 20), 30)
+                    iterations = 500
                     
                     # Launch kernel
                     kernel(input_gpu, np.int32(array_size), np.int32(iterations),
@@ -413,9 +414,9 @@ def main():
         print("All stresses run simultaneously for maximum load")
         print("=" * 60)
         
-        target_utilization = 75
-        spike_duration = 20
-        interval = 60
+        target_utilization = 90
+        spike_duration = 200
+        interval = 200
         
         cycle_count = 0
         max_cycles = 5  # Safety limit
