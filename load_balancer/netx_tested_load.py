@@ -676,7 +676,7 @@ class LoadBalancerNode:
         )
 
         cloud_score = clamp(
-            cloud_score + overload_bonus * 0.22
+            cloud_score + overload_bonus * 0.25
         )
 
         if latency_critical:
