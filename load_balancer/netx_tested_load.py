@@ -70,9 +70,9 @@ class LoadBalancerNode:
         self.last_processing_time = 0.0
         self.profile_skip_counter = 0
         self.profile_skip_interval = rospy.get_param("~profile_skip_interval", 3)  # Profile every 3rd frame
-        self.cached_edge_density = 0.0
-        self.cached_texture_density = 0.0
-        self.cached_scene_complexity = 0.0
+        # self.cached_edge_density = 0.0
+        # self.cached_texture_density = 0.0
+        # self.cached_scene_complexity = 0.0
         self.upload_speed = 0.0
         self.download_speed = 0.0
         self.rtt_ms = None
@@ -555,29 +555,30 @@ class LoadBalancerNode:
         # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
         # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
         # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
-        if self.profile_skip_counter == 0:
-            edge_density = float(
-                np.count_nonzero(cv2.Canny(gray, 60, 160))
-            ) / float(gray.size)
+        # if self.profile_skip_counter == 0:
+        #     edge_density = float(
+        #         np.count_nonzero(cv2.Canny(gray, 60, 160))
+        #     ) / float(gray.size)
 
-            texture_density = float(
-                cv2.Laplacian(gray, cv2.CV_32F).var()
-            )
+        #     texture_density = float(
+        #         cv2.Laplacian(gray, cv2.CV_32F).var()
+        #     )
 
-            scene_complexity = clamp(
-                edge_density * 2.5 + texture_density / 2500.0
-            )
+        #     scene_complexity = clamp(
+        #         edge_density * 2.5 + texture_density / 2500.0
+        #     )
 
-            # cache results
-            self.cached_edge_density = edge_density
-            self.cached_texture_density = texture_density
-            self.cached_scene_complexity = scene_complexity
+        #     # cache results
+        #     self.cached_edge_density = edge_density
+        #     self.cached_texture_density = texture_density
+        #     self.cached_scene_complexity = scene_complexity
 
-        else:
-            # reuse cached values
-            edge_density = self.cached_edge_density
-            texture_density = self.cached_texture_density
-            scene_complexity = self.cached_scene_complexity
+        # else:
+        #     # reuse cached values
+        #     edge_density = self.cached_edge_density
+        #     texture_density = self.cached_texture_density
+        #     scene_complexity = self.cached_scene_complexity
+        scene_complexity = 0.0
 
         change_score = 0.0
         if self.scene_embedding is not None:
@@ -592,7 +593,7 @@ class LoadBalancerNode:
         
         self.scene_profile = {
             "motion_score": round(motion_score, 4),
-            "scene_complexity": round(scene_complexity, 4),
+            # "scene_complexity": round(scene_complexity, 4),
             "change_score": round(change_score, 4),
         }
         return self.scene_profile
@@ -642,14 +643,41 @@ class LoadBalancerNode:
         accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
         high_accuracy_need = clamp(
             (accuracy_bias * 0.55)
-            + (profile["scene_complexity"] * 0.2)
+            # + (profile["scene_complexity"] * 0.2)
             + (profile["change_score"] * 0.1)
             + (tracker_uncertainty * 0.15)
         )
         latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
-        edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
-        cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
+      
+
+        # edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
+        # cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
+
+        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+
+        overload_bonus = 0.0
+
+        if resource_pressure > 0.85:
+            overload_bonus = (resource_pressure - 0.80) / 0.15
+
+        edge_score = clamp(
+            (low_latency * 0.35)
+            + (low_compute_load * 0.20)
+            + (low_motion * 0.17)
+            + (power_saving * 0.2)
+        )
+
+        cloud_score = clamp(
+            (high_accuracy_need * 0.40)
+            + (bandwidth_quality * 0.40)
+            - (latency_penalty * 0.20)
+            # + (profile["scene_complexity"] * 0.25)
+        )
+
+        cloud_score = clamp(
+            cloud_score + overload_bonus * 0.25
+        )
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
@@ -668,19 +696,19 @@ class LoadBalancerNode:
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.35:
+            # Poor network: reduce resolution instead of offloading full res
+            route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
 
-        route = "offboard"
+        # route = "onboard"
 
 
         rospy.logdebug(
@@ -763,7 +791,7 @@ class LoadBalancerNode:
                     "" if self.rtt_ms is None else round(self.rtt_ms, 2),
                     round(self.jitter_ms, 2),
                     profile.get("motion_score", ""),
-                    profile.get("scene_complexity", ""),
+                    profile.get("scene_complexity", 0.0),
                     profile.get("change_score", ""),
                     scores.get("edge_score", ""),
                     scores.get("cloud_score", ""),
