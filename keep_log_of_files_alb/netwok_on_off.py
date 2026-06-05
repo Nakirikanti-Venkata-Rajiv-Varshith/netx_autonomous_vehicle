@@ -675,9 +675,9 @@ class LoadBalancerNode:
             # + (profile["scene_complexity"] * 0.25)
         )
 
-        # cloud_score = clamp(
-        #     cloud_score + overload_bonus * 0.20
-        # )
+        cloud_score = clamp(
+            cloud_score + overload_bonus * 0.20
+        )
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
@@ -709,55 +709,32 @@ class LoadBalancerNode:
         #         route = "onboard"
 
         # route = "offboard"
+# Set once when experiment starts
+        if not hasattr(self, "experiment_start_time"):
+            self.experiment_start_time = time.time()
 
-        onboard_ok = (
-            cpu_usage < self.resource_threshold
-            and gpu_usage < 100
-        )
+        elapsed = time.time() - self.experiment_start_time
 
-        bandwidth_sufficient = (
-            upload_speed >= self.bandwidth_high_threshold
-            and download_speed >= self.bandwidth_high_threshold
-        )
+        # Determine current 5-second block
+        block = int(elapsed // 15)
 
-        bandwidth_low = (
-            upload_speed <= self.bandwidth_low_threshold
-            or download_speed <= self.bandwidth_low_threshold
-        )
+        # Even blocks: normal logic
+        # Odd blocks: force onboard
+        force_onboard = (block % 2 == 1)
 
-        if latency_sensitivity == "high":
-
-            if onboard_ok:
-                route = "onboard"
-
-            elif bandwidth_low:
-                route = "onboard"
-
-            elif bandwidth_sufficient:
-                route = "offboard"
-
-            else:
-                route = (
-                    "onboard"
-                    if accuracy_priority == "high"
-                    else "lower_resolution"
-                )
-
+        if force_onboard:
+            route = "onboard"
         else:
-
-            if accuracy_priority == "high":
-                route = (
-                    "onboard"
-                    if bandwidth_low
-                    else "offboard"
-                )
-
+            # Original ALB logic
+            if latency_critical and edge_score >= cloud_score:
+                route = "onboard"
+            elif bandwidth_quality < 0.35:
+                route = "lower_resolution"
             else:
-                route = (
-                    "offboard"
-                    if bandwidth_sufficient
-                    else "lower_resolution"
-                )        
+                if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                    route = "offboard"
+                else:
+                    route = "onboard"
 
 
         rospy.logdebug(
