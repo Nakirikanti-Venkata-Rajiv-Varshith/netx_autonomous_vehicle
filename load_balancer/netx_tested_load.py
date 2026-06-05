@@ -708,7 +708,33 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        # route = "offboard"
+# Set once when experiment starts
+        if not hasattr(self, "experiment_start_time"):
+            self.experiment_start_time = time.time()
+
+        elapsed = time.time() - self.experiment_start_time
+
+        # Determine current 5-second block
+        block = int(elapsed // 5)
+
+        # Even blocks: normal logic
+        # Odd blocks: force onboard
+        force_onboard = (block % 2 == 1)
+
+        if force_onboard:
+            route = "onboard"
+        else:
+            # Original ALB logic
+            if latency_critical and edge_score >= cloud_score:
+                route = "onboard"
+            elif bandwidth_quality < 0.35:
+                route = "lower_resolution"
+            else:
+                if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                    route = "offboard"
+                else:
+                    route = "onboard"
 
 
         rospy.logdebug(
