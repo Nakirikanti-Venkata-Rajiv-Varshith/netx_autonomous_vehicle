@@ -681,9 +681,9 @@ class LoadBalancerNode:
             # + (profile["scene_complexity"] * 0.25)
         )
 
-        # cloud_score = clamp(
-        #     cloud_score + overload_bonus * 0.20
-        # )
+        cloud_score = clamp(
+            cloud_score + overload_bonus * 0.20
+        )
 
         if latency_critical:
             edge_score = clamp(edge_score + 0.2)
