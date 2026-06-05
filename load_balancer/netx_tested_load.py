@@ -716,7 +716,7 @@ class LoadBalancerNode:
         elapsed = time.time() - self.experiment_start_time
 
         # Determine current 5-second block
-        block = int(elapsed // 5)
+        block = int(elapsed // 15)
 
         # Even blocks: normal logic
         # Odd blocks: force onboard
