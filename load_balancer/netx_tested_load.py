@@ -717,7 +717,7 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        route = "onboard"
 
         # bandwidth_sufficient = (
                 #     upload_speed >= self.bandwidth_high_threshold
