@@ -731,19 +731,19 @@ class LoadBalancerNode:
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        if latency_critical and edge_score >= cloud_score:
-            route = "onboard"
-        elif bandwidth_quality < 0.35:
-            # Poor network: reduce resolution instead of offloading full res
-            route = "lower_resolution"
-        else:
-            # Normal network: choose based on accuracy need vs compute load
-            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-                route = "offboard"
-            else:
-                route = "onboard"
+        # if latency_critical and edge_score >= cloud_score:
+        #     route = "onboard"
+        # elif bandwidth_quality < 0.35:
+        #     # Poor network: reduce resolution instead of offloading full res
+        #     route = "lower_resolution"
+        # else:
+        #     # Normal network: choose based on accuracy need vs compute load
+        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+        #         route = "offboard"
+        #     else:
+        #         route = "onboard"
 
-        # route = "offboard"
+        route = "offboard"
 
         # bandwidth_sufficient = (
                 #     upload_speed >= self.bandwidth_high_threshold
@@ -1139,6 +1139,25 @@ class LoadBalancerNode:
         try:
             try:
                 result = response.json()
+                models_returned = []
+
+                if "Lane_detection_model" in result:
+                    models_returned.append("lane")
+
+                if "OBD_model" in result:
+                    models_returned.append("collision")
+
+                if "Traffic_detection_model" in result:
+                    models_returned.append("traffic")
+
+                rospy.logwarn(
+                    f"REQUEST_APP={app} "
+                    f"FRAME={request_meta['frame_uuid'] if request_meta else 'NA'} "
+                    f"RESPONSE_MODELS={models_returned}"
+                )
+
+
+
             except json.JSONDecodeError:
                 text = response.text
                 rospy.logwarn(f"Edge response not valid JSON: {text[:200]}")
