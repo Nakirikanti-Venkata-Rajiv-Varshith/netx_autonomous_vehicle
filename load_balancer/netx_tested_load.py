@@ -908,7 +908,19 @@ class LoadBalancerNode:
             rospy.logwarn(
                 f"STORE app={app} frame={frame_uuid}"
             )
+            # with self.cloud_lock:
+            #     self.latest_cloud_requests[app] = request_meta
+            #     self.cloud_event.set()
             with self.cloud_lock:
+
+                if self.latest_cloud_requests[app] is not None:
+
+                    rospy.logerr(
+                        f"DROPPED app={app} "
+                        f"old={self.latest_cloud_requests[app]['frame_uuid']} "
+                        f"new={frame_uuid}"
+                    )
+
                 self.latest_cloud_requests[app] = request_meta
                 self.cloud_event.set()
         except Exception as exc:
