@@ -757,7 +757,7 @@ class LoadBalancerNode:
         #     else:
         #         route = "onboard"
 
-        route = "offboard"
+        # route = "offboard"
 
         # bandwidth_sufficient = (
                 #     upload_speed >= self.bandwidth_high_threshold
@@ -769,48 +769,48 @@ class LoadBalancerNode:
                 #     or download_speed <= self.bandwidth_low_threshold
                 # )
 
-        # onboard_ok = (
-        #     cpu_usage < self.resource_threshold
-        #     and gpu_usage < 100
-        # )
-        # bandwidth_sufficient = bandwidth_quality >= 0.70
+        onboard_ok = (
+            cpu_usage < self.resource_threshold
+            and gpu_usage < 100
+        )
+        bandwidth_sufficient = bandwidth_quality >= 0.70
 
-        # bandwidth_low = bandwidth_quality <= 0.35
+        bandwidth_low = bandwidth_quality <= 0.35
 
       
-        # if latency_sensitivity == "high":
+        if latency_sensitivity == "high":
 
-        #     if onboard_ok:
-        #         route = "onboard"
+            if onboard_ok:
+                route = "onboard"
 
-        #     elif bandwidth_low:
-        #         route = "onboard"
+            elif bandwidth_low:
+                route = "onboard"
 
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
+            elif bandwidth_sufficient:
+                route = "offboard"
 
-        #     else:
-        #         route = (
-        #             "onboard"
-        #             if accuracy_priority == "high"
-        #             else "lower_resolution"
-        #         )
+            else:
+                route = (
+                    "onboard"
+                    if accuracy_priority == "high"
+                    else "lower_resolution"
+                )
 
-        # else:
+        else:
 
-        #     if accuracy_priority == "high":
-        #         route = (
-        #             "onboard"
-        #             if bandwidth_low
-        #             else "offboard"
-        #         )
+            if accuracy_priority == "high":
+                route = (
+                    "onboard"
+                    if bandwidth_low
+                    else "offboard"
+                )
 
-        #     else:
-        #         route = (
-        #             "offboard"
-        #             if bandwidth_sufficient
-        #             else "lower_resolution"
-        #         )        
+            else:
+                route = (
+                    "offboard"
+                    if bandwidth_sufficient
+                    else "lower_resolution"
+                )        
 
 
         rospy.logdebug(
