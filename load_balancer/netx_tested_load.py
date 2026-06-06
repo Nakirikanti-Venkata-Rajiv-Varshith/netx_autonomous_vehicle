@@ -202,6 +202,24 @@ class LoadBalancerNode:
             "traffic_sign_detection": None,
         }
 
+        self.frame_stats = {
+            "lane_detection": {
+                "received": 0,
+                "executed": 0,
+                "dropped": 0,
+            },
+            "collision_avoidance": {
+                "received": 0,
+                "executed": 0,
+                "dropped": 0,
+            },
+            "traffic_sign_detection": {
+                "received": 0,
+                "executed": 0,
+                "dropped": 0,
+            },
+        }
+
         rospy.Subscriber("/lane_detection/result", String, self.onboard_lane_callback, queue_size=1)
         rospy.Subscriber(
             "/load_balancer/yolov5/object_detect", ObjectsInfo, self.onboard_object_callback, queue_size=1
@@ -365,6 +383,17 @@ class LoadBalancerNode:
         self.cloud_event.set()
         rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
+            rospy.logwarn("========== FRAME STATS ==========")
+
+            for app, stats in self.frame_stats.items():
+
+                rospy.logwarn(
+                    f"{app}: "
+                    f"received={stats['received']} "
+                    f"executed={stats['executed']} "
+                    f"dropped={stats['dropped']}"
+                )
+
             self.csv_file.close()
         except Exception:
             pass
@@ -831,7 +860,7 @@ class LoadBalancerNode:
             e2e = ""
             if frame_uuid in self.frame_timing and location != "onboard":
                 e2e = round(time.time() - self.frame_timing[frame_uuid]["t_capture"], 4)
-                self.frame_timing.pop(frame_uuid, None)
+                #self.frame_timing.pop(frame_uuid, None)
             elif frame_uuid in self.frame_timing and location.startswith("onboard"):
                 e2e = round(time.time() - self.frame_timing[frame_uuid]["t_capture"], 4)
 
@@ -911,15 +940,13 @@ class LoadBalancerNode:
             # with self.cloud_lock:
             #     self.latest_cloud_requests[app] = request_meta
             #     self.cloud_event.set()
+            self.frame_stats[app]["received"] += 1
+
             with self.cloud_lock:
 
                 if self.latest_cloud_requests[app] is not None:
 
-                    rospy.logerr(
-                        f"DROPPED app={app} "
-                        f"old={self.latest_cloud_requests[app]['frame_uuid']} "
-                        f"new={frame_uuid}"
-                    )
+                    self.frame_stats[app]["dropped"] += 1
 
                 self.latest_cloud_requests[app] = request_meta
                 self.cloud_event.set()
@@ -1079,6 +1106,10 @@ class LoadBalancerNode:
                         self.publish_edge_fallback(
                             request_meta["app"]
                         )
+
+                    self.frame_stats[
+                        request_meta["app"]
+                    ]["executed"] += 1
 
                     self.log_row(
                         request_meta["frame_uuid"],
