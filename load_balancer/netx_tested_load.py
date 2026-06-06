@@ -158,8 +158,21 @@ class LoadBalancerNode:
         }
 
         self.cloud_lock = threading.Lock()
-        self.cloud_event = threading.Event()
-        threading.Thread(target=self._cloud_worker, daemon=True).start()
+        self.cloud_events = {
+            "lane_detection": threading.Event(),
+            "collision_avoidance": threading.Event(),
+            "traffic_sign_detection": threading.Event(),
+        }
+        for app in [
+            "lane_detection",
+            "collision_avoidance",
+            "traffic_sign_detection"
+        ]:
+            threading.Thread(
+                target=self._cloud_worker,
+                args=(app,),
+                daemon=True
+            ).start()
         threading.Thread(target=self._gc_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
@@ -380,7 +393,8 @@ class LoadBalancerNode:
 
     def shutdown(self, signum, frame):
         self.is_running = False
-        self.cloud_event.set()
+        for app in self.cloud_events.keys():
+            self.cloud_events[app].set()
         rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
             rospy.logwarn("========== FRAME STATS ==========")
@@ -731,19 +745,19 @@ class LoadBalancerNode:
 
         # Simplified routing: onboard vs offboard only (remove dual_path complexity)
         # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
+        if latency_critical and edge_score >= cloud_score:
+            route = "onboard"
+        elif bandwidth_quality < 0.35:
+            # Poor network: reduce resolution instead of offloading full res
+            route = "lower_resolution"
+        else:
+            # Normal network: choose based on accuracy need vs compute load
+            if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
+                route = "offboard"
+            else:
+                route = "onboard"
 
-        route = "offboard"
+        # route = "offboard"
 
         # bandwidth_sufficient = (
                 #     upload_speed >= self.bandwidth_high_threshold
@@ -949,7 +963,7 @@ class LoadBalancerNode:
                     self.frame_stats[app]["dropped"] += 1
 
                 self.latest_cloud_requests[app] = request_meta
-                self.cloud_event.set()
+                self.cloud_events[app].set()
         except Exception as exc:
             rospy.logwarn(f"Failed to store cloud request for {app}: {exc}")
             self.publish_edge_fallback(app)
@@ -1038,102 +1052,89 @@ class LoadBalancerNode:
         msg.data = cv_image.tobytes()
         return msg
 
-    def _cloud_worker(self):
+    def _cloud_worker(self, app):
         # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
         while self.is_running:
-            self.cloud_event.wait()
-            if not self.is_running:
-                break
+
+            self.cloud_events[app].wait()
 
             with self.cloud_lock:
 
-                requests_to_process = []
+                request_meta = self.latest_cloud_requests[app]
+                self.latest_cloud_requests[app] = None
 
-                for app, request_meta in self.latest_cloud_requests.items():
-
-                    if request_meta is not None:
-                        requests_to_process.append(request_meta)
-                        self.latest_cloud_requests[app] = None
-
-                if not requests_to_process:
-                    self.cloud_event.clear()
-                    continue
+            if request_meta is None:
+                self.cloud_events[app].clear()
+                continue
 
             try:
-                for request_meta in requests_to_process:
-                    rospy.logwarn(
-                        f"PROCESS app={request_meta['app']} frame={request_meta['frame_uuid']}"
+                rospy.logwarn(
+                    f"PROCESS app={app} frame={request_meta['frame_uuid']}"
+                )
+                try:
+
+                    dispatch = self._prepare_cloud_payload_optimized(
+                        request_meta["frame"],
+                        request_meta["app"],
+                        request_meta["location_label"]
                     )
-                    try:
 
-                        dispatch = self._prepare_cloud_payload_optimized(
-                            request_meta["frame"],
+                    request_meta["headers"] = dispatch["headers"]
+                    request_meta["payload"] = dispatch["payload"]
+                    request_meta["frame"] = None
+
+                    response = self.session.post(
+                        self.server_url,
+                        data=request_meta["payload"],
+                        headers=request_meta["headers"],
+                        timeout=self.edge_timeout,
+                    )
+
+                    if response.status_code == 200:
+
+                        self.process_edge_response(
+                            response,
                             request_meta["app"],
-                            request_meta["location_label"]
+                            request_meta
                         )
 
-                        request_meta["headers"] = dispatch["headers"]
-                        request_meta["payload"] = dispatch["payload"]
-                        request_meta["frame"] = None
-
-                        response = self.session.post(
-                            self.server_url,
-                            data=request_meta["payload"],
-                            headers=request_meta["headers"],
-                            timeout=self.edge_timeout,
-                        )
-
-                        if response.status_code == 200:
-
-                            self.process_edge_response(
-                                response,
-                                request_meta["app"],
-                                request_meta
-                            )
-
-                        else:
-                            self.publish_edge_fallback(
-                                request_meta["app"]
-                            )
-
-                    except Exception as exc:
-
-                        rospy.logwarn(
-                            f"Edge request failed for "
-                            f"{request_meta['app']}: {exc}"
-                        )
-
+                    else:
                         self.publish_edge_fallback(
                             request_meta["app"]
                         )
 
-                    self.frame_stats[
-                        request_meta["app"]
-                    ]["executed"] += 1
+                except Exception as exc:
 
-                    self.log_row(
-                        request_meta["frame_uuid"],
-                        request_meta["app"],
-                        request_meta["scores"].get("route", "offboard"),
-                        request_meta["location_label"],
-                        request_meta["bandwidth"],
-                        request_meta["cpu"],
-                        request_meta["gpu"],
-                        request_meta["power_mw"],
-                        request_meta["ram"],
-                        profile=request_meta["profile"],
-                        scores=request_meta["scores"],
+                    rospy.logwarn(
+                        f"Edge request failed for "
+                        f"{request_meta['app']}: {exc}"
                     )
+
+                    self.publish_edge_fallback(
+                        request_meta["app"]
+                    )
+
+                self.frame_stats[
+                    request_meta["app"]
+                ]["executed"] += 1
+
+                self.log_row(
+                    request_meta["frame_uuid"],
+                    request_meta["app"],
+                    request_meta["scores"].get("route", "offboard"),
+                    request_meta["location_label"],
+                    request_meta["bandwidth"],
+                    request_meta["cpu"],
+                    request_meta["gpu"],
+                    request_meta["power_mw"],
+                    request_meta["ram"],
+                    profile=request_meta["profile"],
+                    scores=request_meta["scores"],
+                )
             finally:
                 with self.cloud_lock:
-
-                    has_pending = any(
-                        value is not None
-                        for value in self.latest_cloud_requests.values()
-                    )
-
-                    if not has_pending:
-                        self.cloud_event.clear()
+                    if self.latest_cloud_requests[app] is None:
+                        self.cloud_events[app].clear()
 
     def process_edge_response(self, response, app, request_meta=None):
         try:
