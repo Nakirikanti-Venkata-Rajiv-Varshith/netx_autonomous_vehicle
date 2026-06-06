@@ -158,21 +158,8 @@ class LoadBalancerNode:
         }
 
         self.cloud_lock = threading.Lock()
-        self.cloud_events = {
-            "lane_detection": threading.Event(),
-            "collision_avoidance": threading.Event(),
-            "traffic_sign_detection": threading.Event(),
-        }
-        for app in [
-            "lane_detection",
-            "collision_avoidance",
-            "traffic_sign_detection"
-        ]:
-            threading.Thread(
-                target=self._cloud_worker,
-                args=(app,),
-                daemon=True
-            ).start()
+        self.cloud_event = threading.Event()
+        threading.Thread(target=self._cloud_worker, daemon=True).start()
         threading.Thread(target=self._gc_worker, daemon=True).start()
 
         log_dir = os.path.expanduser(
@@ -207,13 +194,8 @@ class LoadBalancerNode:
         )
         rospy.logdebug("CSV logging: %s", self.csv_path)
         # FIX #1: Replace queue with latest-frame strategy
-        # self.latest_cloud_request = None
-                # Latest frame per application
-        self.latest_cloud_requests = {
-            "lane_detection": None,
-            "collision_avoidance": None,
-            "traffic_sign_detection": None,
-        }
+        # single latest cloud request (one upload for multiple models)
+        self.latest_cloud_request = None
 
         self.frame_stats = {
             "lane_detection": {
@@ -393,8 +375,7 @@ class LoadBalancerNode:
 
     def shutdown(self, signum, frame):
         self.is_running = False
-        for app in self.cloud_events.keys():
-            self.cloud_events[app].set()
+        self.cloud_event.set()
         rospy.logdebug("Shutting down LoadBalancerNode...")
         try:
             rospy.logwarn("========== FRAME STATS ==========")
@@ -470,25 +451,16 @@ class LoadBalancerNode:
             profile = self.profile_frame(frame)
             edge_available = self.check_edge_server_available()
 
+            # Collect per-app routing decisions first so we can batch cloud uploads
+            cloud_apps = []
+            onboard_apps = []
+
             for app in self.applications:
                 profile_snapshot = dict(profile)
                 routing = get_application_table(app)
                 if routing is None:
                     rospy.logwarn(f"Application '{app}' not in table, routing onboard.")
-                    self.forward_to_onboard(app, ros_image, frame_override=frame)
-                    self.log_row(
-                        frame_uuid,
-                        app,
-                        "unknown",
-                        "onboard",
-                        self.upload_speed,
-                        usage["cpu_percent"],
-                        usage["gpu_percent"],
-                        usage["power_mw"],
-                        usage["ram_percent"],
-                        profile=profile_snapshot,
-                        scores={"edge_score": 0.0, "cloud_score": 0.0},
-                    )
+                    onboard_apps.append((app, {"edge_score": 0.0, "cloud_score": 0.0}, profile_snapshot))
                     continue
 
                 decision = self.decide_processing_location(
@@ -508,68 +480,56 @@ class LoadBalancerNode:
                 if decision["publish_cached"]:
                     self.publish_cached_result(app)
 
-                onboard_dispatched = False
-                cloud_dispatched = False
-
-                # Route decision: onboard, offboard (full res), or lower_resolution
                 if decision["route"] == "onboard":
-                    self.forward_to_onboard(app, ros_image, frame_override=frame)
-                    onboard_dispatched = True
+                    onboard_apps.append((app, decision, profile_snapshot))
+                else:
+                    cloud_apps.append((app, decision, profile_snapshot))
 
-                elif decision["route"] in ("offboard", "lower_resolution"):
-                    cloud_frame = frame
-                    location_label = "edge"
-                    if decision["route"] == "lower_resolution":
-                        cloud_frame = self.lower_resolution(frame)
-                        location_label = "edge_low_res"
+            # Execute onboard work immediately and log per-app
+            for app, decision, profile_snapshot in onboard_apps:
+                self.forward_to_onboard(app, ros_image, frame_override=frame)
+                self.log_row(
+                    frame_uuid,
+                    app,
+                    decision["route"],
+                    "onboard",
+                    self.upload_speed,
+                    usage["cpu_percent"],
+                    usage["gpu_percent"],
+                    usage["power_mw"],
+                    usage["ram_percent"],
+                    profile=profile_snapshot,
+                    scores=decision,
+                )
 
-                    self.forward_to_edge(
-                        cloud_frame,
-                        app,
-                        frame_uuid,
-                        self.upload_speed,
-                        usage["cpu_percent"],
-                        usage["gpu_percent"],
-                        usage["power_mw"],
-                        usage["ram_percent"],
-                        location_label,
-                        capture_time=capture_time,
-                        profile=profile_snapshot,
-                        scores=decision,
-                    )
-                    cloud_dispatched = True
+            # Batch cloud requests into a single upload when possible
+            if cloud_apps:
+                requested_models = [app for app, _, _ in cloud_apps]
+                scores_per_model = {app: decision for app, decision, _ in cloud_apps}
+                profiles_per_model = {app: profile for app, _, profile in cloud_apps}
 
-                if onboard_dispatched:
-                    self.log_row(
-                        frame_uuid,
-                        app,
-                        decision["route"],
-                        "onboard",
-                        self.upload_speed,
-                        usage["cpu_percent"],
-                        usage["gpu_percent"],
-                        usage["power_mw"],
-                        usage["ram_percent"],
-                        profile=profile_snapshot,
-                        scores=decision,
-                    )
+                # choose lower resolution if any app requested it
+                cloud_frame = frame
+                location_label = "edge"
+                if any(decision.get("route") == "lower_resolution" for _, decision, _ in cloud_apps):
+                    cloud_frame = self.lower_resolution(frame)
+                    location_label = "edge_low_res"
 
-                if not onboard_dispatched and not cloud_dispatched:
-                    # Fallback: route to onboard if neither path succeeded
-                    self.forward_to_onboard(app, ros_image, frame_override=frame)
-                    self.log_row(
-                        frame_uuid,
-                        app,
-                        decision["route"],
-                        "onboard_fallback",
-                        self.upload_speed,
-                        usage["cpu_percent"],
-                        usage["gpu_percent"],
-                        usage["power_mw"],
-                        usage["ram_percent"],
-                        profile=profile_snapshot,
-                        scores=decision,
-                    )
+                self.forward_to_edge(
+                    cloud_frame,
+                    requested_models,
+                    frame_uuid,
+                    self.upload_speed,
+                    usage["cpu_percent"],
+                    usage["gpu_percent"],
+                    usage["power_mw"],
+                    usage["ram_percent"],
+                    location_label,
+                    capture_time=capture_time,
+                    profile=None,
+                    scores_per_model=scores_per_model,
+                    profiles_per_model=profiles_per_model,
+                )
 
         except Exception as exc:
             rospy.logerr(f"Error in handle_frame: {exc}")
@@ -909,7 +869,7 @@ class LoadBalancerNode:
     def forward_to_edge(
         self,
         frame,
-        app,
+        requested_models,
         frame_uuid,
         bandwidth,
         cpu,
@@ -919,7 +879,8 @@ class LoadBalancerNode:
         location_label,
         capture_time=None,
         profile=None,
-        scores=None,
+        scores_per_model=None,
+        profiles_per_model=None,
     ):
         try:
             # Optimize: Downscale frame BEFORE storing to prevent memory spikes
@@ -931,7 +892,7 @@ class LoadBalancerNode:
                 frame_to_send = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
             
             request_meta = {
-                "app": app,
+                "requested_models": list(requested_models),
                 "frame_uuid": frame_uuid,
                 "capture_time": capture_time or time.time(),
                 "bandwidth": bandwidth,
@@ -941,34 +902,46 @@ class LoadBalancerNode:
                 "ram": ram,
                 "location_label": location_label,
                 "profile": profile or dict(self.scene_profile),
-                "scores": scores or {},
+                "scores_per_model": scores_per_model or {},
+                "profiles_per_model": profiles_per_model or {},
                 "frame": frame_to_send,  # Pre-downscaled to reduce memory pressure
                 "headers": None,
                 "payload": None,
             }
 
-            # FIX #1: Replace queue with latest-frame strategy (standard realtime robotics approach)
+            # FIX #1: Replace queue with latest-frame strategy (single latest request for multiple models)
             rospy.logwarn(
-                f"STORE app={app} frame={frame_uuid}"
+                f"STORE apps={','.join(requested_models)} frame={frame_uuid}"
             )
-            # with self.cloud_lock:
-            #     self.latest_cloud_requests[app] = request_meta
-            #     self.cloud_event.set()
-            self.frame_stats[app]["received"] += 1
+
+            for m in requested_models:
+                # count received per-model
+                try:
+                    self.frame_stats[m]["received"] += 1
+                except Exception:
+                    pass
 
             with self.cloud_lock:
 
-                if self.latest_cloud_requests[app] is not None:
+                if self.latest_cloud_request is not None:
+                    # previous pending request dropped for its models
+                    for m in self.latest_cloud_request.get("requested_models", []):
+                        try:
+                            self.frame_stats[m]["dropped"] += 1
+                        except Exception:
+                            pass
 
-                    self.frame_stats[app]["dropped"] += 1
-
-                self.latest_cloud_requests[app] = request_meta
-                self.cloud_events[app].set()
+                self.latest_cloud_request = request_meta
+                self.cloud_event.set()
         except Exception as exc:
-            rospy.logwarn(f"Failed to store cloud request for {app}: {exc}")
-            self.publish_edge_fallback(app)
+            rospy.logwarn(f"Failed to store cloud request: {exc}")
+            for m in requested_models:
+                try:
+                    self.publish_edge_fallback(m)
+                except Exception:
+                    pass
 
-    def _prepare_cloud_payload_optimized(self, frame, app, location_label):
+    def _prepare_cloud_payload_optimized(self, frame, requested_models, location_label):
         """Optimize: Frame pre-downscaled and encode for cloud transport."""
         resized = frame
 
@@ -995,7 +968,7 @@ class LoadBalancerNode:
             "Frame-Width": str(bgr.shape[1]),
             "Frame-Height": str(bgr.shape[0]),
             "Client-Timestamp": str(time.time()),
-            "detection-flag": app,
+            "detection-flags": ",".join(requested_models),
             "Cloud-Transport": "jpeg",
             "Cloud-Route": location_label,
             "Network-RTT-Ms": "NA" if self.rtt_ms is None else str(round(self.rtt_ms, 2)),
@@ -1052,31 +1025,30 @@ class LoadBalancerNode:
         msg.data = cv_image.tobytes()
         return msg
 
-    def _cloud_worker(self, app):
+    def _cloud_worker(self):
         # FIX #1: Process only the latest request to prevent queue accumulation (realtime robotics standard)
         while self.is_running:
-
-            self.cloud_events[app].wait()
+            self.cloud_event.wait()
+            if not self.is_running:
+                break
 
             with self.cloud_lock:
-
-                request_meta = self.latest_cloud_requests[app]
-                self.latest_cloud_requests[app] = None
+                request_meta = self.latest_cloud_request
+                self.latest_cloud_request = None
 
             if request_meta is None:
-                self.cloud_events[app].clear()
+                self.cloud_event.clear()
                 continue
 
             try:
                 rospy.logwarn(
-                    f"PROCESS app={app} frame={request_meta['frame_uuid']}"
+                    f"PROCESS apps={','.join(request_meta.get('requested_models', []))} frame={request_meta['frame_uuid']}"
                 )
                 try:
-
                     dispatch = self._prepare_cloud_payload_optimized(
                         request_meta["frame"],
-                        request_meta["app"],
-                        request_meta["location_label"]
+                        request_meta.get("requested_models", []),
+                        request_meta["location_label"],
                     )
 
                     request_meta["headers"] = dispatch["headers"]
@@ -1091,74 +1063,57 @@ class LoadBalancerNode:
                     )
 
                     if response.status_code == 200:
-
-                        self.process_edge_response(
-                            response,
-                            request_meta["app"],
-                            request_meta
-                        )
-
+                        self.process_edge_response(response, None, request_meta)
                     else:
-                        self.publish_edge_fallback(
-                            request_meta["app"]
-                        )
+                        for m in request_meta.get("requested_models", []):
+                            try:
+                                self.publish_edge_fallback(m)
+                            except Exception:
+                                pass
 
                 except Exception as exc:
+                    rospy.logwarn(f"Edge request failed: {exc}")
+                    for m in request_meta.get("requested_models", []):
+                        try:
+                            self.publish_edge_fallback(m)
+                        except Exception:
+                            pass
 
-                    rospy.logwarn(
-                        f"Edge request failed for "
-                        f"{request_meta['app']}: {exc}"
-                    )
+                # record execution and write a log row per requested model
+                for m in request_meta.get("requested_models", []):
+                    try:
+                        self.frame_stats[m]["executed"] += 1
+                    except Exception:
+                        pass
 
-                    self.publish_edge_fallback(
-                        request_meta["app"]
-                    )
+                    scores = request_meta.get("scores_per_model", {}).get(m, {})
+                    profile_for_m = request_meta.get("profiles_per_model", {}).get(m, request_meta.get("profile", {}))
 
-                self.frame_stats[
-                    request_meta["app"]
-                ]["executed"] += 1
-
-                self.log_row(
-                    request_meta["frame_uuid"],
-                    request_meta["app"],
-                    request_meta["scores"].get("route", "offboard"),
-                    request_meta["location_label"],
-                    request_meta["bandwidth"],
-                    request_meta["cpu"],
-                    request_meta["gpu"],
-                    request_meta["power_mw"],
-                    request_meta["ram"],
-                    profile=request_meta["profile"],
-                    scores=request_meta["scores"],
-                )
+                    try:
+                        self.log_row(
+                            request_meta["frame_uuid"],
+                            m,
+                            scores.get("route", "offboard") if isinstance(scores, dict) else "offboard",
+                            request_meta["location_label"],
+                            request_meta["bandwidth"],
+                            request_meta["cpu"],
+                            request_meta["gpu"],
+                            request_meta["power_mw"],
+                            request_meta["ram"],
+                            profile=profile_for_m,
+                            scores=scores,
+                        )
+                    except Exception:
+                        pass
             finally:
                 with self.cloud_lock:
-                    if self.latest_cloud_requests[app] is None:
-                        self.cloud_events[app].clear()
+                    if self.latest_cloud_request is None:
+                        self.cloud_event.clear()
 
     def process_edge_response(self, response, app, request_meta=None):
         try:
             try:
                 result = response.json()
-                models_returned = []
-
-                if "Lane_detection_model" in result:
-                    models_returned.append("lane")
-
-                if "OBD_model" in result:
-                    models_returned.append("collision")
-
-                if "Traffic_detection_model" in result:
-                    models_returned.append("traffic")
-
-                rospy.logwarn(
-                    f"REQUEST_APP={app} "
-                    f"FRAME={request_meta['frame_uuid'] if request_meta else 'NA'} "
-                    f"RESPONSE_MODELS={models_returned}"
-                )
-
-
-
             except json.JSONDecodeError:
                 text = response.text
                 rospy.logwarn(f"Edge response not valid JSON: {text[:200]}")
