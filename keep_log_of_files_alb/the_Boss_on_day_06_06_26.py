@@ -433,7 +433,20 @@ class LoadBalancerNode:
             return
         self.last_processing_time = now
 
+        # self.frame_id += 1
+
         self.frame_id += 1
+
+        for app in self.applications:
+                self.frame_stats[app]["received"] += 1
+
+        if self.frame_id % 3 == 0:
+
+            for app in self.applications:
+                self.frame_stats[app]["dropped"] += 1
+
+            return
+        
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
         if capture_time <= 0:
             capture_time = now
