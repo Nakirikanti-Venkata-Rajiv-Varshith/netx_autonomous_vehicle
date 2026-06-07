@@ -42,6 +42,25 @@ APPLICATION_TABLE = {
     "infotainment": {"latency_sensitivity": "low", "accuracy_priority": "low"},
 }
 
+APP_OFFLOAD_BIAS = {
+
+    "collision_avoidance":      -0.15,
+
+    "collision_detection":      -0.05,
+    "pedestrian_avoidance":     -0.05,
+    "pedestrian_detection":     -0.05,
+    "localization":             -0.05,
+    "lane_detection":           -0.05,
+    "depth_estimation":         -0.05,
+    "drivable_area":            -0.05,
+
+    "traffic_light_detection":   0.10,
+    "traffic_sign_detection":    0.10,
+
+    "drowsiness_detection":      0.05,
+
+    "infotainment":              0.15,
+}
 
 def get_application_table(application_name):
     return APPLICATION_TABLE.get(application_name)
@@ -814,7 +833,8 @@ class LoadBalancerNode:
                 f"BW={upload_speed:.2f}Mbps"
             )
 
-            if routing_score >= 0.60:
+            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+            if routing_score >= 0.65:
                 route = "offboard"
             else:
                 route = "onboard"
