@@ -15,7 +15,9 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import cv2
+import joblib
 import numpy as np
+import pandas as pd
 import requests
 import rospy
 from geometry_msgs.msg import Twist
@@ -64,6 +66,22 @@ class LoadBalancerNode:
         self.machine_type = os.environ.get("MACHINE_TYPE")
         self.lock = threading.Lock()
         self.session = requests.Session()
+
+        script_dir = os.path.dirname(
+            os.path.realpath(__file__)
+        )
+
+        model_path = os.path.join(
+            script_dir,
+            "routing_rf.pkl"
+        )
+
+        rospy.logwarn(
+            f"MODEL PATH = {model_path}"
+        )
+        self.routing_model = joblib.load(model_path)
+
+        rospy.logwarn("RF ROUTING MODEL LOADED")
 
         self.frame_timing = {}
         self.frame_id = 0
@@ -607,6 +625,36 @@ class LoadBalancerNode:
         }
         return self.scene_profile
 
+    def predict_route(
+        self,
+        bandwidth,
+        cpu,
+        gpu,
+        ram,
+        rtt,
+        jitter,
+        motion,
+        change
+    ):
+
+        features = pd.DataFrame([{
+            "bandwidth_mbps": float(bandwidth),
+            "cpu_percent": float(cpu),
+            "gpu_percent": float(gpu),
+            "ram_percent": float(ram),
+            "rtt_ms": float(rtt),
+            "jitter_ms": float(jitter),
+            "motion_score": float(motion),
+            "change_score": float(change),
+        }])
+
+        probs = self.routing_model.predict_proba(features)[0]
+
+        return {
+            "onboard_prob": float(probs[0]),
+            "offboard_prob": float(probs[1]),
+        }
+
     def decide_processing_location(
         self,
         latency_sensitivity,
@@ -637,206 +685,64 @@ class LoadBalancerNode:
                 "force_fresh": True,
             }
 
-        cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
-        gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
-        ram_norm = clamp((ram_usage or 0.0) / 100.0)
-        rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
-        jitter_penalty = clamp(self.jitter_ms / 80.0)
-        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
-        low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
-        low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
-        low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
-        high_motion = clamp(1 - low_motion)
-        power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
-
-        accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
-        high_accuracy_need = clamp(
-            (accuracy_bias * 0.55)
-            # + (profile["scene_complexity"] * 0.2)
-            + (profile["change_score"] * 0.1)
-            + (tracker_uncertainty * 0.15)
-        )
-        latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
-
-      
-
-        # edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
-        # cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
-
-        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
-
-        overload_bonus = 0.0
-
-        if resource_pressure > 0.85:
-            overload_bonus = (resource_pressure - 0.80) / 0.15
-
-        edge_score = clamp(
-            (low_latency * 0.35)
-            + (low_compute_load * 0.20)
-            + (low_motion * 0.17)
-            + (power_saving * 0.2)
+        prediction = self.predict_route(
+            upload_speed,
+            cpu_usage,
+            gpu_usage,
+            ram_usage,
+            self.rtt_ms or 0,
+            self.jitter_ms,
+            profile["motion_score"],
+            profile["change_score"]
         )
 
-        cloud_score = clamp(
-            (high_accuracy_need * 0.40)
-            + (bandwidth_quality * 0.40)
-            - (latency_penalty * 0.20)
-            # + (profile["scene_complexity"] * 0.25)
-        )
+        offload_prob = prediction["offboard_prob"]
 
-        cloud_score = clamp(
-            cloud_score + overload_bonus * 0.20
-        )
+        if self.rtt_ms is not None and self.rtt_ms > 200:
+            offload_prob = 0.0
 
-        if latency_critical:
-            edge_score = clamp(edge_score + 0.2)
-            # cloud_score = clamp(cloud_score - 0.15)
+        # if upload_speed < 5:
+        #     offload_prob = 0.0
 
-        if power_mw and power_mw > self.power_budget_mw:
-            cloud_score = clamp(cloud_score + 0.2)
+        if cpu_usage > 95 and gpu_usage > 95 and upload_speed > 1:
+            offload_prob = 1.0
 
-        # publish_cached = (
-        #     not fresh_required
-        #     and tracker_uncertainty < 0.35
-        #     and profile["change_score"] < 0.08
-        #     and profile["motion_score"] < 0.5
-        # )
+        edge_score = prediction["onboard_prob"]
+        cloud_score = prediction["offboard_prob"]
+
         publish_cached = False
+        fresh_required = True
 
-        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
+        rospy.logwarn(
+            f"RF: offload_prob={offload_prob:.3f} "
+            f"cpu={cpu_usage:.1f} "
+            f"gpu={gpu_usage:.1f} "
+            f"bw={upload_speed:.1f}"
+        )
 
-        # route = "offboard"
-
-        # bandwidth_sufficient = (
-                #     upload_speed >= self.bandwidth_high_threshold
-                #     and download_speed >= self.bandwidth_high_threshold
-                # )
-
-                # bandwidth_low = (
-                #     upload_speed <= self.bandwidth_low_threshold
-                #     or download_speed <= self.bandwidth_low_threshold
-                # )
-
-        # onboard_ok = (
-        #     cpu_usage < self.resource_threshold
-        #     and gpu_usage < 100
-        # )
-        # bandwidth_sufficient = bandwidth_quality >= 0.70
-
-        # bandwidth_low = bandwidth_quality <= 0.35
-
-      
-        # if latency_sensitivity == "high":
-
-        #     if onboard_ok:
-        #         route = "onboard"
-
-        #     elif bandwidth_low:
-        #         route = "onboard"
-
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
-
-        #     else:
-        #         route = (
-        #             "onboard"
-        #             if accuracy_priority == "high"
-        #             else "lower_resolution"
-        #         )
-
-        # else:
-
-        #     if accuracy_priority == "high":
-        #         route = (
-        #             "onboard"
-        #             if bandwidth_low
-        #             else "offboard"
-        #         )
-
-        #     else:
-        #         route = (
-        #             "offboard"
-        #             if bandwidth_sufficient
-        #             else "lower_resolution"
-        #         )        
-
-        # =====================================================
-# ROUTING SCORE
-# =====================================================
-
-        if not self.network_ok:
-            route = "onboard"
-
+        if offload_prob > 0.80:
+            route = "offboard"
         else:
-
-            ram_norm = min(ram_usage / 100.0, 1.0)
-            cpu_norm = min(cpu_usage / 100.0, 1.0)
-            gpu_norm = min(gpu_usage / 100.0, 1.0)
-
-            rtt_norm = min(self.rtt_ms / 20.0, 1.0)
-            jitter_norm = min(self.jitter_ms / 10.0, 1.0)
-
-            bw_norm = min(upload_speed / 2.0, 1.0)
-
-            motion_norm = min(profile["motion_score"] / 0.10, 1.0)
-            change_norm = min(profile["change_score"] / 0.10, 1.0)
-
-            routing_score = (
-                0.218 * ram_norm +
-                0.167 * cpu_norm +
-                0.088 * gpu_norm +
-                0.117 * (1.0 - rtt_norm) +
-                0.147 * (1.0 - jitter_norm) +
-                0.101 * bw_norm +
-                0.099 * motion_norm +
-                0.063 * change_norm
-            )
-
-            rospy.logwarn(
-                f"[RF_ROUTE] score={routing_score:.3f} "
-                f"RAM={ram_usage:.1f}% "
-                f"CPU={cpu_usage:.1f}% "
-                f"GPU={gpu_usage:.1f}% "
-                f"RTT={self.rtt_ms:.2f}ms "
-                f"JITTER={self.jitter_ms:.2f}ms "
-                f"BW={upload_speed:.2f}Mbps"
-            )
-
-            if routing_score >= 0.60:
-                route = "offboard"
-            else:
-                route = "onboard"
+            route = "onboard"        
 
 
-            rospy.logdebug(
-                        "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
-                        app,
-                        edge_score,
-                        cloud_score,
-                        route,
-                        fresh_required,
-                        "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-                        self.jitter_ms,
-                    )
-            return {
-                        "route": route,
-                        "edge_score": round(edge_score, 4),
-                        "cloud_score": round(cloud_score, 4),
-                        "publish_cached": publish_cached,
-                        "force_fresh": fresh_required,
-                    }                
+        rospy.logdebug(
+            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
+            app,
+            edge_score,
+            cloud_score,
+            route,
+            fresh_required,
+            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+            self.jitter_ms,
+        )
+        return {
+            "route": route,
+            "edge_score": round(edge_score, 4),
+            "cloud_score": round(cloud_score, 4),
+            "publish_cached": publish_cached,
+            "force_fresh": fresh_required,
+        }
 
     def check_edge_server_available(self):
         now = time.time()
