@@ -50,12 +50,12 @@ APP_OFFLOAD_BIAS = {
     "pedestrian_avoidance":     -0.05,
     "pedestrian_detection":     -0.05,
     "localization":             -0.05,
-    "lane_detection":           -0.05,
+    "lane_detection":           -0.10,
     "depth_estimation":         -0.05,
     "drivable_area":            -0.05,
 
-    "traffic_light_detection":   0.10,
-    "traffic_sign_detection":    0.10,
+    "traffic_light_detection":   0.15,
+    "traffic_sign_detection":    0.15,
 
     "drowsiness_detection":      0.05,
 
@@ -877,7 +877,7 @@ class LoadBalancerNode:
             # Accuracy Requirement
             # ======================================================
 
-            routing_score += high_accuracy_need * 0.12
+            routing_score += high_accuracy_need * 0.15
 
             # ======================================================
             # Latency Critical Adjustment
