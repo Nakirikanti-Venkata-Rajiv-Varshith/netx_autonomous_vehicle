@@ -459,7 +459,7 @@ class LoadBalancerNode:
         for app in self.applications:
             self.frame_stats[app]["received"] += 1
 
-        if self.frame_id % 2 == 0:
+        if self.frame_id % 3 == 0:
 
             for app in self.applications:
                 self.frame_stats[app]["dropped"] += 1
