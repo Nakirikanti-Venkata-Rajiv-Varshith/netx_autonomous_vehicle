@@ -830,20 +830,20 @@ class LoadBalancerNode:
                 0.063 * change_norm
             )
 
-            # App-specific learned bias
-            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+            # # App-specific learned bias
+            # routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
 
-            # ======================================================
-            # Resource Pressure Bonus
-            # ======================================================
+            # # ======================================================
+            # # Resource Pressure Bonus
+            # # ======================================================
 
-            resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+            # resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
 
-            if resource_pressure > 0.85:
-                overload_bonus = (
-                    (resource_pressure - 0.85) / 0.15
-                )
-                routing_score += overload_bonus * 0.15
+            # if resource_pressure > 0.85:
+            #     overload_bonus = (
+            #         (resource_pressure - 0.85) / 0.15
+            #     )
+            #     routing_score += overload_bonus * 0.15
 
             # ======================================================
             # Accuracy Requirement
@@ -874,17 +874,17 @@ class LoadBalancerNode:
                 min(routing_score, 1.0)
             )
 
-            rospy.logwarn(
-                f"[RF_ROUTE] score={routing_score:.3f} "
-                f"RAM={ram_usage:.1f}% "
-                f"CPU={cpu_usage:.1f}% "
-                f"GPU={gpu_usage:.1f}% "
-                f"RTT={self.rtt_ms:.2f}ms "
-                f"JITTER={self.jitter_ms:.2f}ms "
-                f"BW={upload_speed:.2f}Mbps "
-                f"ACC={high_accuracy_need:.2f} "
-                f"LAT_CRIT={latency_critical}"
-            )
+            # rospy.logwarn(
+            #     f"[RF_ROUTE] score={routing_score:.3f} "
+            #     f"RAM={ram_usage:.1f}% "
+            #     f"CPU={cpu_usage:.1f}% "
+            #     f"GPU={gpu_usage:.1f}% "
+            #     f"RTT={self.rtt_ms:.2f}ms "
+            #     f"JITTER={self.jitter_ms:.2f}ms "
+            #     f"BW={upload_speed:.2f}Mbps "
+            #     f"ACC={high_accuracy_need:.2f} "
+            #     f"LAT_CRIT={latency_critical}"
+            # )
 
             # ======================================================
             # Hard Guardrails
@@ -896,7 +896,7 @@ class LoadBalancerNode:
             elif latency_critical and self.rtt_ms > 15.0:
                 route = "onboard"
 
-            elif routing_score >= 0.65:
+            elif routing_score >= 0.62:
                 route = "offboard"
 
             else:
