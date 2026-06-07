@@ -794,11 +794,14 @@ class LoadBalancerNode:
         # =====================================================
 # ROUTING SCORE
 # =====================================================
-
         if not self.network_ok:
             route = "onboard"
 
         else:
+
+            # ======================================================
+            # Normalization
+            # ======================================================
 
             ram_norm = min(ram_usage / 100.0, 1.0)
             cpu_norm = min(cpu_usage / 100.0, 1.0)
@@ -812,6 +815,10 @@ class LoadBalancerNode:
             motion_norm = min(profile["motion_score"] / 0.10, 1.0)
             change_norm = min(profile["change_score"] / 0.10, 1.0)
 
+            # ======================================================
+            # ML Routing Score
+            # ======================================================
+
             routing_score = (
                 0.218 * ram_norm +
                 0.167 * cpu_norm +
@@ -823,6 +830,50 @@ class LoadBalancerNode:
                 0.063 * change_norm
             )
 
+            # App-specific learned bias
+            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+
+            # ======================================================
+            # Resource Pressure Bonus
+            # ======================================================
+
+            resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+
+            if resource_pressure > 0.85:
+                overload_bonus = (
+                    (resource_pressure - 0.85) / 0.15
+                )
+                routing_score += overload_bonus * 0.15
+
+            # ======================================================
+            # Accuracy Requirement
+            # ======================================================
+
+            routing_score += high_accuracy_need * 0.12
+
+            # ======================================================
+            # Latency Critical Adjustment
+            # ======================================================
+
+            if latency_critical:
+                routing_score -= 0.15
+
+            # ======================================================
+            # Power Budget Adjustment
+            # ======================================================
+
+            if (
+                power_mw is not None
+                and power_mw > self.power_budget_mw
+            ):
+                routing_score += 0.10
+
+            # Clamp to [0,1]
+            routing_score = max(
+                0.0,
+                min(routing_score, 1.0)
+            )
+
             rospy.logwarn(
                 f"[RF_ROUTE] score={routing_score:.3f} "
                 f"RAM={ram_usage:.1f}% "
@@ -830,12 +881,24 @@ class LoadBalancerNode:
                 f"GPU={gpu_usage:.1f}% "
                 f"RTT={self.rtt_ms:.2f}ms "
                 f"JITTER={self.jitter_ms:.2f}ms "
-                f"BW={upload_speed:.2f}Mbps"
+                f"BW={upload_speed:.2f}Mbps "
+                f"ACC={high_accuracy_need:.2f} "
+                f"LAT_CRIT={latency_critical}"
             )
 
-            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
-            if routing_score >= 0.65:
+            # ======================================================
+            # Hard Guardrails
+            # ======================================================
+
+            if bandwidth_quality < 0.35:
+                route = "lower_resolution"
+
+            elif latency_critical and self.rtt_ms > 15.0:
+                route = "onboard"
+
+            elif routing_score >= 0.65:
                 route = "offboard"
+
             else:
                 route = "onboard"
 
