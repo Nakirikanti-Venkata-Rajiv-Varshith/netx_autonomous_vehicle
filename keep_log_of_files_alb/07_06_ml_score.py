@@ -42,6 +42,25 @@ APPLICATION_TABLE = {
     "infotainment": {"latency_sensitivity": "low", "accuracy_priority": "low"},
 }
 
+APP_OFFLOAD_BIAS = {
+
+    "collision_avoidance":      -0.15,
+
+    "collision_detection":      -0.05,
+    "pedestrian_avoidance":     -0.05,
+    "pedestrian_detection":     -0.05,
+    "localization":             -0.05,
+    "lane_detection":           -0.05,
+    "depth_estimation":         -0.05,
+    "drivable_area":            -0.05,
+
+    "traffic_light_detection":   0.10,
+    "traffic_sign_detection":    0.10,
+
+    "drowsiness_detection":      0.05,
+
+    "infotainment":              0.15,
+}
 
 def get_application_table(application_name):
     return APPLICATION_TABLE.get(application_name)
@@ -729,67 +748,115 @@ class LoadBalancerNode:
                 #     or download_speed <= self.bandwidth_low_threshold
                 # )
 
-        onboard_ok = (
-            cpu_usage < self.resource_threshold
-            and gpu_usage < 100
-        )
-        bandwidth_sufficient = bandwidth_quality >= 0.70
+        # onboard_ok = (
+        #     cpu_usage < self.resource_threshold
+        #     and gpu_usage < 100
+        # )
+        # bandwidth_sufficient = bandwidth_quality >= 0.70
 
-        bandwidth_low = bandwidth_quality <= 0.35
+        # bandwidth_low = bandwidth_quality <= 0.35
 
       
-        if latency_sensitivity == "high":
+        # if latency_sensitivity == "high":
 
-            if onboard_ok:
-                route = "onboard"
+        #     if onboard_ok:
+        #         route = "onboard"
 
-            elif bandwidth_low:
-                route = "onboard"
+        #     elif bandwidth_low:
+        #         route = "onboard"
 
-            elif bandwidth_sufficient:
-                route = "offboard"
+        #     elif bandwidth_sufficient:
+        #         route = "offboard"
 
-            else:
-                route = (
-                    "onboard"
-                    if accuracy_priority == "high"
-                    else "lower_resolution"
-                )
+        #     else:
+        #         route = (
+        #             "onboard"
+        #             if accuracy_priority == "high"
+        #             else "lower_resolution"
+        #         )
+
+        # else:
+
+        #     if accuracy_priority == "high":
+        #         route = (
+        #             "onboard"
+        #             if bandwidth_low
+        #             else "offboard"
+        #         )
+
+        #     else:
+        #         route = (
+        #             "offboard"
+        #             if bandwidth_sufficient
+        #             else "lower_resolution"
+        #         )        
+
+        # =====================================================
+# ROUTING SCORE
+# =====================================================
+
+        if not self.network_ok:
+            route = "onboard"
 
         else:
 
-            if accuracy_priority == "high":
-                route = (
-                    "onboard"
-                    if bandwidth_low
-                    else "offboard"
-                )
+            ram_norm = min(ram_usage / 100.0, 1.0)
+            cpu_norm = min(cpu_usage / 100.0, 1.0)
+            gpu_norm = min(gpu_usage / 100.0, 1.0)
 
+            rtt_norm = min(self.rtt_ms / 20.0, 1.0)
+            jitter_norm = min(self.jitter_ms / 10.0, 1.0)
+
+            bw_norm = min(upload_speed / 2.0, 1.0)
+
+            motion_norm = min(profile["motion_score"] / 0.10, 1.0)
+            change_norm = min(profile["change_score"] / 0.10, 1.0)
+
+            routing_score = (
+                0.218 * ram_norm +
+                0.167 * cpu_norm +
+                0.088 * gpu_norm +
+                0.117 * (1.0 - rtt_norm) +
+                0.147 * (1.0 - jitter_norm) +
+                0.101 * bw_norm +
+                0.099 * motion_norm +
+                0.063 * change_norm
+            )
+
+            rospy.logwarn(
+                f"[RF_ROUTE] score={routing_score:.3f} "
+                f"RAM={ram_usage:.1f}% "
+                f"CPU={cpu_usage:.1f}% "
+                f"GPU={gpu_usage:.1f}% "
+                f"RTT={self.rtt_ms:.2f}ms "
+                f"JITTER={self.jitter_ms:.2f}ms "
+                f"BW={upload_speed:.2f}Mbps"
+            )
+
+            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+            if routing_score >= 0.65:
+                route = "offboard"
             else:
-                route = (
-                    "offboard"
-                    if bandwidth_sufficient
-                    else "lower_resolution"
-                )        
+                route = "onboard"
 
 
-        rospy.logdebug(
-            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
-            app,
-            edge_score,
-            cloud_score,
-            route,
-            fresh_required,
-            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-            self.jitter_ms,
-        )
-        return {
-            "route": route,
-            "edge_score": round(edge_score, 4),
-            "cloud_score": round(cloud_score, 4),
-            "publish_cached": publish_cached,
-            "force_fresh": fresh_required,
-        }
+            rospy.logdebug(
+                        "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
+                        app,
+                        edge_score,
+                        cloud_score,
+                        route,
+                        fresh_required,
+                        "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+                        self.jitter_ms,
+                    )
+            return {
+                        "route": route,
+                        "edge_score": round(edge_score, 4),
+                        "cloud_score": round(cloud_score, 4),
+                        "publish_cached": publish_cached,
+                        "force_fresh": fresh_required,
+                    }                
 
     def check_edge_server_available(self):
         now = time.time()
