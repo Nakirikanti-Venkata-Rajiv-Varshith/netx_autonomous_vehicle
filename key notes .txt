@@ -36,6 +36,7 @@ chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_*.py
 chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/*.py
 chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/*.py
 chmod +x ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/yolov5_detect_merge/*.py
+export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1
 roslaunch ~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/netx_load_balancer_main.launch
 
 3. run this

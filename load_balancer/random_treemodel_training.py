@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
 import joblib
-import xgboost
-import sklearn
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     classification_report,
@@ -10,7 +9,7 @@ from sklearn.metrics import (
     roc_auc_score
 )
 
-from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestClassifier
 
 # =====================================================
 # LOAD DATA
@@ -58,30 +57,16 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 # =====================================================
-# CLASS IMBALANCE
+# RANDOM FOREST
 # =====================================================
 
-num_negative = (y_train == 0).sum()
-num_positive = (y_train == 1).sum()
-
-scale_pos_weight = num_negative / num_positive
-
-print("scale_pos_weight =", scale_pos_weight)
-
-# =====================================================
-# XGBOOST
-# =====================================================
-
-model = XGBClassifier(
-    objective="binary:logistic",
-    n_estimators=300,
-    max_depth=5,
-    learning_rate=0.05,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    scale_pos_weight=scale_pos_weight,
-    eval_metric="logloss",
+model = RandomForestClassifier(
+    n_estimators=500,
+    max_depth=10,
+    min_samples_leaf=5,
+    class_weight="balanced",
     random_state=42,
+    n_jobs=-1,
 )
 
 # =====================================================
@@ -128,17 +113,11 @@ print(importance)
 # SAVE
 # =====================================================
 
-joblib.dump(model, "routing_xgb.pkl")
-model.save_model("routing_xgb.json")
+joblib.dump(model, "routing_rf.pkl")
+joblib.dump(features, "routing_rf_features.pkl")
 
-print("\nSaved -> routing_xgb.pkl")
-print("Saved -> routing_xgb.json")
-
-
-print("\nEnvironment")
-print("XGBoost :", xgboost.__version__)
-print("Sklearn :", sklearn.__version__)
-print("NumPy   :", np.__version__)
+print("\nSaved -> routing_rf.pkl")
+print("Saved -> routing_rf_features.pkl")
 
 print("\nFeature Order")
 print(features)
