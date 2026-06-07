@@ -942,13 +942,13 @@ class LoadBalancerNode:
             #             "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
             #             self.jitter_ms,
             #         )
-            # return {
-            #             "route": route,
-            #             "edge_score": round(edge_score, 4),
-            #             "cloud_score": round(cloud_score, 4),
-            #             "publish_cached": publish_cached,
-            #             "force_fresh": fresh_required,
-            #         }                
+            return {
+                        "route": route,
+                        "edge_score": round(edge_score, 4),
+                        "cloud_score": round(cloud_score, 4),
+                        "publish_cached": publish_cached,
+                        "force_fresh": fresh_required,
+                    }                
 
 
                                     # DECIDE THE PATH ABOVE BELOW DONT TOUCH
