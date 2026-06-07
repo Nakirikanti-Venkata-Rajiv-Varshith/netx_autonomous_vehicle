@@ -858,8 +858,8 @@ class LoadBalancerNode:
                 0.063 * change_norm
             )
 
-            # # App-specific learned bias
-            # routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+            # App-specific learned bias
+            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
 
             # # ======================================================
             # # Resource Pressure Bonus
