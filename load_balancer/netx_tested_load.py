@@ -766,48 +766,48 @@ class LoadBalancerNode:
 
                 ###************************************ if else rootinG stTYLE ******************#################
 
-        onboard_ok = (
-            cpu_usage < self.resource_threshold
-            and gpu_usage < 100
-        )
-        bandwidth_sufficient = bandwidth_quality >= 0.70
+        # onboard_ok = (
+        #     cpu_usage < self.resource_threshold
+        #     and gpu_usage < 100
+        # )
+        # bandwidth_sufficient = bandwidth_quality >= 0.70
 
-        bandwidth_low = bandwidth_quality <= 0.35
+        # bandwidth_low = bandwidth_quality <= 0.35
 
       
-        if latency_sensitivity == "high":
+        # if latency_sensitivity == "high":
 
-            if onboard_ok:
-                route = "onboard"
+        #     if onboard_ok:
+        #         route = "onboard"
 
-            elif bandwidth_low:
-                route = "onboard"
+        #     elif bandwidth_low:
+        #         route = "onboard"
 
-            elif bandwidth_sufficient:
-                route = "offboard"
+        #     elif bandwidth_sufficient:
+        #         route = "offboard"
 
-            else:
-                route = (
-                    "onboard"
-                    if accuracy_priority == "high"
-                    else "lower_resolution"
-                )
+        #     else:
+        #         route = (
+        #             "onboard"
+        #             if accuracy_priority == "high"
+        #             else "lower_resolution"
+        #         )
 
-        else:
+        # else:
 
-            if accuracy_priority == "high":
-                route = (
-                    "onboard"
-                    if bandwidth_low
-                    else "offboard"
-                )
+        #     if accuracy_priority == "high":
+        #         route = (
+        #             "onboard"
+        #             if bandwidth_low
+        #             else "offboard"
+        #         )
 
-            else:
-                route = (
-                    "offboard"
-                    if bandwidth_sufficient
-                    else "lower_resolution"
-                )        
+        #     else:
+        #         route = (
+        #             "offboard"
+        #             if bandwidth_sufficient
+        #             else "lower_resolution"
+        #         )        
 
 
 
@@ -822,113 +822,113 @@ class LoadBalancerNode:
 
 
 
-        # if not self.network_ok:
-        #     route = "onboard"
+        if not self.network_ok:
+            route = "onboard"
 
-        # else:
+        else:
 
-        #     # ======================================================
-        #     # Normalization
-        #     # ======================================================
+            # ======================================================
+            # Normalization
+            # ======================================================
 
-        #     ram_norm = min(ram_usage / 100.0, 1.0)
-        #     cpu_norm = min(cpu_usage / 100.0, 1.0)
-        #     gpu_norm = min(gpu_usage / 100.0, 1.0)
+            ram_norm = min(ram_usage / 100.0, 1.0)
+            cpu_norm = min(cpu_usage / 100.0, 1.0)
+            gpu_norm = min(gpu_usage / 100.0, 1.0)
 
-        #     rtt_norm = min(self.rtt_ms / 20.0, 1.0)
-        #     jitter_norm = min(self.jitter_ms / 10.0, 1.0)
+            rtt_norm = min(self.rtt_ms / 20.0, 1.0)
+            jitter_norm = min(self.jitter_ms / 10.0, 1.0)
 
-        #     bw_norm = min(upload_speed / 2.0, 1.0)
+            bw_norm = min(upload_speed / 2.0, 1.0)
 
-        #     motion_norm = min(profile["motion_score"] / 0.10, 1.0)
-        #     change_norm = min(profile["change_score"] / 0.10, 1.0)
+            motion_norm = min(profile["motion_score"] / 0.10, 1.0)
+            change_norm = min(profile["change_score"] / 0.10, 1.0)
 
-        #     # ======================================================
-        #     # ML Routing Score
-        #     # ======================================================
+            # ======================================================
+            # ML Routing Score
+            # ======================================================
 
-        #     routing_score = (
-        #         0.218 * ram_norm +
-        #         0.167 * cpu_norm +
-        #         0.088 * gpu_norm +
-        #         0.117 * (1.0 - rtt_norm) +
-        #         0.147 * (1.0 - jitter_norm) +
-        #         0.101 * bw_norm +
-        #         0.099 * motion_norm +
-        #         0.063 * change_norm
-        #     )
+            routing_score = (
+                0.218 * ram_norm +
+                0.167 * cpu_norm +
+                0.088 * gpu_norm +
+                0.117 * (1.0 - rtt_norm) +
+                0.147 * (1.0 - jitter_norm) +
+                0.101 * bw_norm +
+                0.099 * motion_norm +
+                0.063 * change_norm
+            )
 
-        #     # # App-specific learned bias
-        #     # routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+            # # App-specific learned bias
+            # routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
 
-        #     # # ======================================================
-        #     # # Resource Pressure Bonus
-        #     # # ======================================================
+            # # ======================================================
+            # # Resource Pressure Bonus
+            # # ======================================================
 
-        #     # resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+            # resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
 
-        #     # if resource_pressure > 0.85:
-        #     #     overload_bonus = (
-        #     #         (resource_pressure - 0.85) / 0.15
-        #     #     )
-        #     #     routing_score += overload_bonus * 0.15
+            # if resource_pressure > 0.85:
+            #     overload_bonus = (
+            #         (resource_pressure - 0.85) / 0.15
+            #     )
+            #     routing_score += overload_bonus * 0.15
 
-        #     # ======================================================
-        #     # Accuracy Requirement
-        #     # ======================================================
+            # ======================================================
+            # Accuracy Requirement
+            # ======================================================
 
-        #     routing_score += high_accuracy_need * 0.12
+            routing_score += high_accuracy_need * 0.12
 
-        #     # ======================================================
-        #     # Latency Critical Adjustment
-        #     # ======================================================
+            # ======================================================
+            # Latency Critical Adjustment
+            # ======================================================
 
-        #     if latency_critical:
-        #         routing_score -= 0.15
+            if latency_critical:
+                routing_score -= 0.15
 
-        #     # ======================================================
-        #     # Power Budget Adjustment
-        #     # ======================================================
+            # ======================================================
+            # Power Budget Adjustment
+            # ======================================================
 
-        #     if (
-        #         power_mw is not None
-        #         and power_mw > self.power_budget_mw
-        #     ):
-        #         routing_score += 0.10
+            if (
+                power_mw is not None
+                and power_mw > self.power_budget_mw
+            ):
+                routing_score += 0.10
 
-        #     # Clamp to [0,1]
-        #     routing_score = max(
-        #         0.0,
-        #         min(routing_score, 1.0)
-        #     )
+            # Clamp to [0,1]
+            routing_score = max(
+                0.0,
+                min(routing_score, 1.0)
+            )
 
-        #     # rospy.logwarn(
-        #     #     f"[RF_ROUTE] score={routing_score:.3f} "
-        #     #     f"RAM={ram_usage:.1f}% "
-        #     #     f"CPU={cpu_usage:.1f}% "
-        #     #     f"GPU={gpu_usage:.1f}% "
-        #     #     f"RTT={self.rtt_ms:.2f}ms "
-        #     #     f"JITTER={self.jitter_ms:.2f}ms "
-        #     #     f"BW={upload_speed:.2f}Mbps "
-        #     #     f"ACC={high_accuracy_need:.2f} "
-        #     #     f"LAT_CRIT={latency_critical}"
-        #     # )
+            # rospy.logwarn(
+            #     f"[RF_ROUTE] score={routing_score:.3f} "
+            #     f"RAM={ram_usage:.1f}% "
+            #     f"CPU={cpu_usage:.1f}% "
+            #     f"GPU={gpu_usage:.1f}% "
+            #     f"RTT={self.rtt_ms:.2f}ms "
+            #     f"JITTER={self.jitter_ms:.2f}ms "
+            #     f"BW={upload_speed:.2f}Mbps "
+            #     f"ACC={high_accuracy_need:.2f} "
+            #     f"LAT_CRIT={latency_critical}"
+            # )
 
-        #     # ======================================================
-        #     # Hard Guardrails
-        #     # ======================================================
+            # ======================================================
+            # Hard Guardrails
+            # ======================================================
 
-        #     if bandwidth_quality < 0.35:
-        #         route = "lower_resolution"
+            if bandwidth_quality < 0.35:
+                route = "lower_resolution"
 
-        #     elif latency_critical and self.rtt_ms > 15.0:
-        #         route = "onboard"
+            elif latency_critical and self.rtt_ms > 15.0:
+                route = "onboard"
 
-        #     elif routing_score >= 0.62:
-        #         route = "offboard"
+            elif routing_score >= 0.62:
+                route = "offboard"
 
-        #     else:
-        #         route = "onboard"
+            else:
+                route = "onboard"
 
 
 
