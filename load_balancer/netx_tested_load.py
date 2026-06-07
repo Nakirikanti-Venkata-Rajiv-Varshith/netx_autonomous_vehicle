@@ -67,11 +67,18 @@ class LoadBalancerNode:
         self.lock = threading.Lock()
         self.session = requests.Session()
 
+        script_dir = os.path.dirname(
+            os.path.realpath(__file__)
+        )
+
         model_path = os.path.join(
-            os.path.dirname(__file__),
+            script_dir,
             "routing_rf.pkl"
         )
 
+        rospy.logwarn(
+            f"MODEL PATH = {model_path}"
+        )
         self.routing_model = joblib.load(model_path)
 
         rospy.logwarn("RF ROUTING MODEL LOADED")
