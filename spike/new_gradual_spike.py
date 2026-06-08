@@ -40,7 +40,7 @@ def cpu_worker(target_percent, stop_event):
         ) < busy_time and not stop_event.is_set():
 
             x = 0
-            for i in range(1000):
+            for i in range(10000):
                 x += i * i
 
         sleep_time = period - busy_time
@@ -181,7 +181,7 @@ class StressController:
         if current >= target_percent:
             return
 
-        block_size_mb = 100
+        block_size_mb = 300
 
         try:
 
