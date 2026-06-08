@@ -42,6 +42,25 @@ APPLICATION_TABLE = {
     "infotainment": {"latency_sensitivity": "low", "accuracy_priority": "low"},
 }
 
+APP_OFFLOAD_BIAS = {
+
+    "collision_avoidance":      -0.15,
+
+    "collision_detection":      -0.05,
+    "pedestrian_avoidance":     -0.05,
+    "pedestrian_detection":     -0.05,
+    "localization":             -0.05,
+    "lane_detection":           -0.10,
+    "depth_estimation":         -0.05,
+    "drivable_area":            -0.05,
+
+    "traffic_light_detection":   0.15,
+    "traffic_sign_detection":    0.15,
+
+    "drowsiness_detection":      0.05,
+
+    "infotainment":              0.15,
+}
 
 def get_application_table(application_name):
     return APPLICATION_TABLE.get(application_name)
@@ -438,15 +457,14 @@ class LoadBalancerNode:
         self.frame_id += 1
 
         # for app in self.applications:
-        #         self.frame_stats[app]["received"] += 1
+        #     self.frame_stats[app]["received"] += 1
 
-        # if self.frame_id % 3 == 0:
+        # if self.frame_id % 5 == 0:
 
         #     for app in self.applications:
         #         self.frame_stats[app]["dropped"] += 1
 
         #     return
-        
         capture_time = ros_image.header.stamp.to_sec() if ros_image.header.stamp else now
         if capture_time <= 0:
             capture_time = now
@@ -716,93 +734,120 @@ class LoadBalancerNode:
         # )
         publish_cached = False
 
-        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
 
-        # route = "offboard"
 
-        # bandwidth_sufficient = (
-                #     upload_speed >= self.bandwidth_high_threshold
-                #     and download_speed >= self.bandwidth_high_threshold
-                # )
+                            ####*************************** ML FUSION ROUTE STYLE *********************#####
+        # =====================================================
+# ROUTING SCORE
+# =====================================================
 
-                # bandwidth_low = (
-                #     upload_speed <= self.bandwidth_low_threshold
-                #     or download_speed <= self.bandwidth_low_threshold
-                # )
 
-        onboard_ok = (
-            cpu_usage < self.resource_threshold
-            and gpu_usage < 100
-        )
-        bandwidth_sufficient = bandwidth_quality >= 0.70
 
-        bandwidth_low = bandwidth_quality <= 0.35
 
-      
-        if latency_sensitivity == "high":
-
-            if onboard_ok:
-                route = "onboard"
-
-            elif bandwidth_low:
-                route = "onboard"
-
-            elif bandwidth_sufficient:
-                route = "offboard"
-
-            else:
-                route = (
-                    "onboard"
-                    if accuracy_priority == "high"
-                    else "lower_resolution"
-                )
-
+        if not self.network_ok:
+            route = "onboard"
+        elif self.rtt_ms is not None and self.rtt_ms > 50:
+            route = "onboard"
         else:
 
-            if accuracy_priority == "high":
-                route = (
-                    "onboard"
-                    if bandwidth_low
-                    else "offboard"
-                )
+            # ======================================================
+            # Normalization
+            # ======================================================
 
+            ram_norm = min(ram_usage / 100.0, 1.0)
+            cpu_norm = min(cpu_usage / 100.0, 1.0)
+            gpu_norm = min(gpu_usage / 100.0, 1.0)
+
+            rtt_norm = min(self.rtt_ms / 20.0, 1.0)
+            jitter_norm = min(self.jitter_ms / 10.0, 1.0)
+
+            bw_norm = min(upload_speed / 2.0, 1.0)
+
+            motion_norm = min(profile["motion_score"] / 0.10, 1.0)
+            change_norm = min(profile["change_score"] / 0.10, 1.0)
+
+            # ======================================================
+            # ML Routing Score
+            # ======================================================
+
+            routing_score = (
+                0.218 * ram_norm +
+                0.167 * cpu_norm +
+                0.088 * gpu_norm +
+                0.117 * (1.0 - rtt_norm) +
+                0.147 * (1.0 - jitter_norm) +
+                0.101 * bw_norm +
+                0.099 * motion_norm +
+                0.063 * change_norm
+            )
+
+            # App-specific learned bias
+            routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
+
+         
+
+            if (
+                power_mw is not None
+                and power_mw > self.power_budget_mw
+            ):
+                routing_score += 0.10
+
+            # Clamp to [0,1]
+            routing_score = max(
+                0.0,
+                min(routing_score, 1.0)
+            )
+
+            # rospy.logwarn(
+            #     f"[RF_ROUTE] score={routing_score:.3f} "
+            #     f"RAM={ram_usage:.1f}% "
+            #     f"CPU={cpu_usage:.1f}% "
+            #     f"GPU={gpu_usage:.1f}% "
+            #     f"RTT={self.rtt_ms:.2f}ms "
+            #     f"JITTER={self.jitter_ms:.2f}ms "
+            #     f"BW={upload_speed:.2f}Mbps "
+            #     f"ACC={high_accuracy_need:.2f} "
+            #     f"LAT_CRIT={latency_critical}"
+            # )
+
+            # ======================================================
+            # Hard Guardrails
+            # ======================================================
+
+          
+            if latency_critical and self.rtt_ms > 15.0:
+                route = "onboard"
+            elif routing_score >= 0.62:
+                if bandwidth_quality < 0.35:
+                    route = "lower_resolution"
+                else:
+                    route = "offboard"
             else:
-                route = (
-                    "offboard"
-                    if bandwidth_sufficient
-                    else "lower_resolution"
-                )        
+                route = "onboard"
 
 
-        rospy.logdebug(
-            "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
-            app,
-            edge_score,
-            cloud_score,
-            route,
-            fresh_required,
-            "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
-            self.jitter_ms,
-        )
-        return {
-            "route": route,
-            "edge_score": round(edge_score, 4),
-            "cloud_score": round(cloud_score, 4),
-            "publish_cached": publish_cached,
-            "force_fresh": fresh_required,
-        }
+
+            # rospy.logdebug(
+            #             "[DECISION] app=%s edge=%.3f cloud=%.3f route=%s fresh=%s rtt=%s jitter=%.2f",
+            #             app,
+            #             edge_score,
+            #             cloud_score,
+            #             route,
+            #             fresh_required,
+            #             "NA" if self.rtt_ms is None else "%.2f" % self.rtt_ms,
+            #             self.jitter_ms,
+            #         )
+            return {
+                        "route": route,
+                        "edge_score": round(edge_score, 4),
+                        "cloud_score": round(cloud_score, 4),
+                        "publish_cached": publish_cached,
+                        "force_fresh": fresh_required,
+                    }                
+
+
+                                    # DECIDE THE PATH ABOVE BELOW DONT TOUCH
+# ________________________________________________________________________________________________________________________#
 
     def check_edge_server_available(self):
         now = time.time()
