@@ -736,84 +736,6 @@ class LoadBalancerNode:
 
 
 
-                ##### HARD CODED SCORE BASED DECISON ########################
-        # Simplified routing: onboard vs offboard only (remove dual_path complexity)
-        # Prefer onboard for latency-critical tasks, offboard for accuracy-critical or resource-constrained
-        # if latency_critical and edge_score >= cloud_score:
-        #     route = "onboard"
-        # elif bandwidth_quality < 0.35:
-        #     # Poor network: reduce resolution instead of offloading full res
-        #     route = "lower_resolution"
-        # else:
-        #     # Normal network: choose based on accuracy need vs compute load
-        #     if high_accuracy_need >= 0.55 and self.network_ok and edge_available:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard"
-
-        # route = "offboard"
-
-        # bandwidth_sufficient = (
-                #     upload_speed >= self.bandwidth_high_threshold
-                #     and download_speed >= self.bandwidth_high_threshold
-                # )
-
-                # bandwidth_low = (
-                #     upload_speed <= self.bandwidth_low_threshold
-                #     or download_speed <= self.bandwidth_low_threshold
-                # )
-
-
-                ###************************************ if else rootinG stTYLE ******************#################
-
-        # onboard_ok = (
-        #     cpu_usage < self.resource_threshold
-        #     and gpu_usage < 100
-        # )
-        # bandwidth_sufficient = bandwidth_quality >= 0.70
-
-        # bandwidth_low = bandwidth_quality <= 0.35
-
-      
-        # if latency_sensitivity == "high":
-
-        #     if onboard_ok:
-        #         route = "onboard"
-
-        #     elif bandwidth_low:
-        #         route = "onboard"
-
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
-
-        #     else:
-        #         route = (
-        #             "onboard"
-        #             if accuracy_priority == "high"
-        #             else "lower_resolution"
-        #         )
-
-        # else:
-
-        #     if accuracy_priority == "high":
-        #         route = (
-        #             "onboard"
-        #             if bandwidth_low
-        #             else "offboard"
-        #         )
-
-        #     else:
-        #         route = (
-        #             "offboard"
-        #             if bandwidth_sufficient
-        #             else "lower_resolution"
-        #         )        
-
-
-
-
-
-
                             ####*************************** ML FUSION ROUTE STYLE *********************#####
         # =====================================================
 # ROUTING SCORE
@@ -824,7 +746,8 @@ class LoadBalancerNode:
 
         if not self.network_ok:
             route = "onboard"
-
+        elif self.rtt_ms is not None and self.rtt_ms > 50:
+            route = "onboard"
         else:
 
             # ======================================================
@@ -861,34 +784,7 @@ class LoadBalancerNode:
             # App-specific learned bias
             routing_score += APP_OFFLOAD_BIAS.get(app, 0.0)
 
-            # # ======================================================
-            # # Resource Pressure Bonus
-            # # ======================================================
-
-            # resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
-
-            # if resource_pressure > 0.85:
-            #     overload_bonus = (
-            #         (resource_pressure - 0.85) / 0.15
-            #     )
-            #     routing_score += overload_bonus * 0.15
-
-            # ======================================================
-            # Accuracy Requirement
-            # ======================================================
-
-            # routing_score += high_accuracy_need * 0.15
-
-            # ======================================================
-            # Latency Critical Adjustment
-            # ======================================================
-
-            # if latency_critical:
-            #     routing_score -= 0.15
-
-            # ======================================================
-            # Power Budget Adjustment
-            # ======================================================
+         
 
             if (
                 power_mw is not None
@@ -918,15 +814,14 @@ class LoadBalancerNode:
             # Hard Guardrails
             # ======================================================
 
-            if bandwidth_quality < 0.35 and routing_score > 0.62:
-                route = "lower_resolution"
-
-            elif latency_critical and self.rtt_ms > 15.0:
+          
+            if latency_critical and self.rtt_ms > 15.0:
                 route = "onboard"
-
             elif routing_score >= 0.62:
-                route = "offboard"
-
+                if bandwidth_quality < 0.35:
+                    route = "lower_resolution"
+                else:
+                    route = "offboard"
             else:
                 route = "onboard"
 
