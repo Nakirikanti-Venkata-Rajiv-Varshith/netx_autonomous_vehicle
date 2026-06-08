@@ -80,6 +80,9 @@ class LoadBalancerNode:
         self.name = name
         self.image = None
         self.is_running = True
+        self.emergency_mode = False
+        self.emergency_start_time = None
+        self.recovery_counter = 0
         self.machine_type = os.environ.get("MACHINE_TYPE")
         self.lock = threading.Lock()
         self.session = requests.Session()
@@ -180,6 +183,10 @@ class LoadBalancerNode:
         self.cloud_event = threading.Event()
         threading.Thread(target=self._cloud_worker, daemon=True).start()
         threading.Thread(target=self._gc_worker, daemon=True).start()
+        threading.Thread(
+            target=self._emergency_monitor,
+            daemon=True
+        ).start()
 
         log_dir = os.path.expanduser(
             "~/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/load_balancer/load_balancer_logs"
@@ -316,6 +323,45 @@ class LoadBalancerNode:
             time.sleep(5)
             gc.collect()
 
+    def stop_vehicle(self):
+        try:
+            rospy.logerr(
+                "EMERGENCY MODE ACTIVATED - STOPPING VEHICLE"
+            )
+
+            self.mecanum_pub.publish(Twist())
+
+        except Exception as e:
+            rospy.logerr(
+                f"Failed to stop vehicle: {e}"
+            )
+
+    def _emergency_monitor(self):
+        while self.is_running:
+            try:
+                if self.emergency_mode:
+                    usage = self._get_resource_usage()
+                    cpu_ok = usage.get("cpu_percent", 0.0) < 90.0
+                    gpu_ok = usage.get("gpu_percent", 0.0) < 85.0
+                    ram_ok = usage.get("ram_percent", 0.0) < 90.0
+
+                    if cpu_ok and gpu_ok and ram_ok:
+                        self.recovery_counter += 1
+                        if self.recovery_counter >= 2:
+                            rospy.logwarn(
+                                "Emergency cleared. Returning to normal operation."
+                            )
+                            self.emergency_mode = False
+                            self.recovery_counter = 0
+                    else:
+                        self.recovery_counter = 0
+            except Exception as e:
+                rospy.logerr(
+                    f"Emergency monitor error: {e}"
+                )
+
+            time.sleep(30)
+
     def _get_resource_usage(self):
         with self._resource_lock:
             return dict(self._resource_cache)
@@ -447,6 +493,9 @@ class LoadBalancerNode:
             self.network_ok = self.upload_speed > 0.0 or self.download_speed > 0.0
 
     def handle_frame(self, frame, ros_image):
+        if self.emergency_mode:
+            return
+
         now = time.time()
         if now - self.last_processing_time < self.min_processing_interval:
             return
@@ -657,6 +706,24 @@ class LoadBalancerNode:
         latency_critical = latency_sensitivity == "high"
         tracker_uncertainty = self.get_tracker_uncertainty(app)
         fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
+
+        resource_emergency = (
+            cpu_usage > 95
+            and gpu_usage > 90
+            and ram_usage > 90
+        )
+
+        if resource_emergency and not self.emergency_mode:
+            self.emergency_mode = True
+            self.emergency_start_time = time.time()
+            self.stop_vehicle()
+            return {
+                "route": "onboard",
+                "edge_score": 0.0,
+                "cloud_score": 0.0,
+                "publish_cached": False,
+                "force_fresh": True,
+            }
 
         if not self.network_ok or not edge_available:
             rospy.logdebug("[DECISION] network unavailable, forcing onboard")
