@@ -122,7 +122,7 @@ class LoadBalancerNode:
         # FIX #5: Reduce network timeout from 2.0s to avoid P90 spikes from slow retries
         self.edge_timeout = rospy.get_param("~edge_timeout", 0.5)
         self.cloud_delay_threshold = rospy.get_param("~cloud_delay_threshold", 0.75)
-        self.power_budget_mw = rospy.get_param("~power_budget_mw", 3200.0)
+        self.power_budget_mw = rospy.get_param("~power_budget_mw", 4200.0)
         self.resource_threshold = rospy.get_param("~resource_threshold", 85.0)
         self.bandwidth_high_threshold = rospy.get_param("~bandwidth_high_threshold", 10.0)
         self.bandwidth_low_threshold = rospy.get_param("~bandwidth_low_threshold", 5.0)
@@ -241,7 +241,7 @@ class LoadBalancerNode:
         while self.is_running:
             try:
                 proc = subprocess.Popen(
-                    ["tegrastats","--interval", "100"],
+                    [ "sudo", "tegrastats","--interval", "100"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     universal_newlines=True,
