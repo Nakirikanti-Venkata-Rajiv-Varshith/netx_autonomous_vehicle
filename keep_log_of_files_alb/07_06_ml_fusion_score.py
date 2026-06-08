@@ -877,14 +877,14 @@ class LoadBalancerNode:
             # Accuracy Requirement
             # ======================================================
 
-            routing_score += high_accuracy_need * 0.15
+            # routing_score += high_accuracy_need * 0.15
 
             # ======================================================
             # Latency Critical Adjustment
             # ======================================================
 
-            if latency_critical:
-                routing_score -= 0.15
+            # if latency_critical:
+            #     routing_score -= 0.15
 
             # ======================================================
             # Power Budget Adjustment
@@ -918,7 +918,7 @@ class LoadBalancerNode:
             # Hard Guardrails
             # ======================================================
 
-            if bandwidth_quality < 0.35:
+            if bandwidth_quality < 0.35 and routing_score > 0.62:
                 route = "lower_resolution"
 
             elif latency_critical and self.rtt_ms > 15.0:
