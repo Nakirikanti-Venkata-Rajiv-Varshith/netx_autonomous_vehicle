@@ -27,7 +27,8 @@ class Yolov5Node:
         signal.signal(signal.SIGINT, self.shutdown)
 
         self.fps = fps.FPS()
-        self.frame_skip = max(1, int(rospy.get_param("~frame_skip", 1)))
+        # self.frame_skip = max(1, int(rospy.get_param("~frame_skip", 1)))
+        self.frame_skip = 1
         self.cache_ttl = rospy.get_param("~cache_ttl", 0.3)
 
         engine = rospy.get_param("~engine")
@@ -223,9 +224,18 @@ class Yolov5Node:
                         self.traffic_seq,
                         self.frame_skip,
                     )
-                    if self.traffic_seq % self.frame_skip == 0 or not self.maybe_publish_cached("traffic"):
-                        self.traffic_funtion(image)
+                    # if self.traffic_seq % self.frame_skip == 0 or not self.maybe_publish_cached("traffic"):
+                    #     self.traffic_funtion(image)
+                    if self.traffic_image is not None:
+                        image = self.traffic_image.copy()
+                        self.traffic_image = None
 
+                        rospy.loginfo(
+                            "processing traffic frame | seq=%d",
+                            self.traffic_seq,
+                        )
+
+                        self.traffic_funtion(image)
                 if self.object_image is not None:
                     image = self.object_image.copy()
                     self.object_image = None
@@ -234,12 +244,22 @@ class Yolov5Node:
                         self.object_seq,
                         self.frame_skip,
                     )
-                    if self.object_seq % self.frame_skip == 0 or not self.maybe_publish_cached("object"):
+                    # if self.object_seq % self.frame_skip == 0 or not self.maybe_publish_cached("object"):
+                    #     self.object_funtion(image)
+                    if self.object_image is not None:
+                        image = self.object_image.copy()
+                        self.object_image = None
+
+                        rospy.loginfo(
+                            "processing object frame | seq=%d",
+                            self.object_seq,
+                        )
+
                         self.object_funtion(image)
             except BaseException as exc:
                 rospy.logerr(f"YOLO processing error: {exc}")
 
-            rospy.sleep(0.01)
+            rospy.sleep(0.05)
 
         self.yolov5.destroy()
         self.yolov5_od.destroy()
