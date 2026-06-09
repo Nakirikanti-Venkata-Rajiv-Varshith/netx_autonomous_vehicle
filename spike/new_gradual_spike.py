@@ -16,9 +16,14 @@ except:
     TORCH_AVAILABLE = False
 
 
-LEVELS = list(range(20, 100, 5))
-STEP_TIME = 5
-HOLD_TIME = 80
+LEVELS = [
+    (45, 10),
+    (55, 10),
+    (65, 10),
+    (75, 10),
+    (85, 30),
+    (90, 60),
+]
 
 
 # ============================================================
@@ -58,7 +63,7 @@ class GPUStressor:
     def __init__(self):
 
         self.running = False
-        self.level = 20
+        self.level = 45
 
     def set_level(self, level):
         self.level = level
@@ -79,33 +84,22 @@ class GPUStressor:
 
             level = self.level
 
-            if level <= 30:
+            if level <= 50:
                 size = 512
-            elif level <= 50:
+            elif level <= 65:
                 size = 768
-            elif level <= 70:
+            elif level <= 75:
                 size = 1024
             elif level <= 85:
-                size = 1536
+                size = 1280
             else:
-                size = 2048
+                size = 1536
 
             try:
 
-                a = torch.randn(
-                    size,
-                    size,
-                    device="cuda"
-                )
-
-                b = torch.randn(
-                    size,
-                    size,
-                    device="cuda"
-                )
-
+                a = torch.randn(size, size, device="cuda")
+                b = torch.randn(size, size, device="cuda")
                 c = torch.matmul(a, b)
-
                 torch.cuda.synchronize()
 
             except Exception as e:
@@ -125,10 +119,7 @@ class StressController:
 
         self.stop_event = mp.Event()
 
-        self.cpu_target = mp.Value(
-            'd',
-            20.0
-        )
+        self.cpu_target = mp.Value('d', 45.0)
 
         self.cpu_processes = []
 
@@ -142,23 +133,16 @@ class StressController:
 
     def start_cpu(self):
 
-        num_workers = max(
-            1,
-            mp.cpu_count() - 1
-        )
+        num_workers = max(1, mp.cpu_count() - 1)
 
         for _ in range(num_workers):
 
             p = mp.Process(
                 target=cpu_worker,
-                args=(
-                    self.cpu_target,
-                    self.stop_event
-                )
+                args=(self.cpu_target, self.stop_event)
             )
 
             p.start()
-
             self.cpu_processes.append(p)
 
     # --------------------------------------------------------
@@ -181,32 +165,34 @@ class StressController:
         if current >= target_percent:
             return
 
-        block_size_mb = 300
+        # Cap RAM target at 85% to avoid OOM
+        safe_target = min(target_percent, 85)
 
-        try:
+        while psutil.virtual_memory().percent < safe_target:
 
-            block = np.ones(
-                (block_size_mb * 1024 * 1024) // 8,
-                dtype=np.float64
-            )
+            block_size_mb = 200
 
-            self.ram_blocks.append(block)
+            try:
 
-        except MemoryError:
-            print("RAM allocation failed")
+                block = np.ones(
+                    (block_size_mb * 1024 * 1024) // 8,
+                    dtype=np.float64
+                )
+
+                self.ram_blocks.append(block)
+
+            except MemoryError:
+                print("RAM allocation limit reached")
+                break
 
     # --------------------------------------------------------
 
     def monitor(self):
 
-        cpu = psutil.cpu_percent()
-
+        cpu = psutil.cpu_percent(interval=1)
         ram = psutil.virtual_memory().percent
 
-        print(
-            f"CPU={cpu:.1f}% "
-            f"RAM={ram:.1f}%"
-        )
+        print(f"  → Live readings: CPU={cpu:.1f}%  RAM={ram:.1f}%")
 
     # --------------------------------------------------------
 
@@ -217,7 +203,6 @@ class StressController:
         self.stop_event.set()
 
         for p in self.cpu_processes:
-
             p.terminate()
             p.join()
 
@@ -229,46 +214,31 @@ class StressController:
 
         gc.collect()
 
-        print("Cleanup complete")
+        print("Cleanup complete.")
 
     # --------------------------------------------------------
 
     def run(self):
 
         self.start_cpu()
-
         self.start_gpu()
 
-        for level in LEVELS:
+        for level, hold in LEVELS:
 
-            print(
-                f"\n========================"
-            )
-
-            print(
-                f"TARGET LEVEL = {level}%"
-            )
-
-            print(
-                f"========================"
-            )
+            print(f"\n{'='*32}")
+            print(f"  TARGET = {level}%   HOLD = {hold}s")
+            print(f"{'='*32}")
 
             self.cpu_target.value = level
-
             self.gpu.set_level(level)
-
             self.allocate_ram(level)
 
+            # Let load settle for 2s before reading
+            time.sleep(2)
             self.monitor()
 
-            time.sleep(STEP_TIME)
-
-        print(
-            f"\nHolding at max load "
-            f"for {HOLD_TIME}s..."
-        )
-
-        time.sleep(HOLD_TIME)
+            # Hold for remaining duration
+            time.sleep(hold - 2)
 
         self.cleanup()
 
@@ -280,15 +250,10 @@ class StressController:
 controller = StressController()
 
 def signal_handler(sig, frame):
-
     controller.cleanup()
     os._exit(0)
 
-signal.signal(
-    signal.SIGINT,
-    signal_handler
-)
+signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
-
     controller.run()
