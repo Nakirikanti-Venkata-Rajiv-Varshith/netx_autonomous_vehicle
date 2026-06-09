@@ -169,7 +169,7 @@ class StressController:
 
         while psutil.virtual_memory().percent < safe_target:
 
-            block_size_mb = 180
+            block_size_mb = 200
 
             try:
 
