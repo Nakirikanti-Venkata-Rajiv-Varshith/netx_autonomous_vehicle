@@ -115,31 +115,6 @@ class GPUStressor:
         self.running = False
 
 
-## +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# TIMER 
-
-
-    def timer_worker(self):
-
-        start_time = time.time()
-
-        while not self.stop_event.is_set():
-
-            elapsed = int(time.time() - start_time)
-
-            hrs = elapsed // 3600
-            mins = (elapsed % 3600) // 60
-            secs = elapsed % 60
-
-            print(
-                f"[TIMER] {hrs:02d}:{mins:02d}:{secs:02d}"
-            )
-
-            time.sleep(1)
-
-
-
-
 # ============================================================
 # MAIN
 # ============================================================
@@ -147,8 +122,6 @@ class GPUStressor:
 class StressController:
 
     def __init__(self):
-
-        self.timer_thread = None
 
         self.stop_event = mp.Event()
 
@@ -262,12 +235,6 @@ class StressController:
 
     def run(self):
 
-        self.timer_thread = threading.Thread(
-            target=self.timer_worker,
-            daemon=True
-        )
-
-        self.timer_thread.start()        
         self.start_cpu()
 
         self.start_gpu()
