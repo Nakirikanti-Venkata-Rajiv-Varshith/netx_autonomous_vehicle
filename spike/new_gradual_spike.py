@@ -21,8 +21,7 @@ LEVELS = [
     (55, 10),
     (65, 10),
     (75, 10),
-    (85, 30),
-    (90, 60),
+    (85, 80),  
 ]
 
 
@@ -170,7 +169,7 @@ class StressController:
 
         while psutil.virtual_memory().percent < safe_target:
 
-            block_size_mb = 200
+            block_size_mb = 180
 
             try:
 
