@@ -21,7 +21,7 @@ LEVELS = [
     (55, 10),
     (65, 10),
     (75, 10),
-    (85, 80),  
+    (85, 90),
 ]
 
 
@@ -109,6 +109,38 @@ class GPUStressor:
 
 
 # ============================================================
+# TIMER
+# ============================================================
+
+class LaunchTimer:
+
+    def __init__(self):
+        self.start_time = time.time()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._tick, daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def elapsed_str(self):
+        elapsed = int(time.time() - self.start_time)
+        h = elapsed // 3600
+        m = (elapsed % 3600) // 60
+        s = elapsed % 60
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _tick(self):
+        while not self._stop.is_set():
+            elapsed = self.elapsed_str()
+            # Overwrite same line using carriage return
+            print(f"\r  ⏱  Elapsed since launch: {elapsed}", end="", flush=True)
+            time.sleep(1)
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -127,6 +159,8 @@ class StressController:
         self.gpu = GPUStressor()
 
         self.gpu_thread = None
+
+        self.timer = LaunchTimer()
 
     # --------------------------------------------------------
 
@@ -181,7 +215,7 @@ class StressController:
                 self.ram_blocks.append(block)
 
             except MemoryError:
-                print("RAM allocation limit reached")
+                print("\nRAM allocation limit reached")
                 break
 
     # --------------------------------------------------------
@@ -191,13 +225,17 @@ class StressController:
         cpu = psutil.cpu_percent(interval=1)
         ram = psutil.virtual_memory().percent
 
-        print(f"  → Live readings: CPU={cpu:.1f}%  RAM={ram:.1f}%")
+        # Print on new line so it doesn't clash with timer line
+        print(f"\n  → Live readings: CPU={cpu:.1f}%  RAM={ram:.1f}%  |  Uptime: {self.timer.elapsed_str()}")
 
     # --------------------------------------------------------
 
     def cleanup(self):
 
-        print("\nReleasing resources...")
+        self.timer.stop()
+
+        print(f"\n\nTotal run time: {self.timer.elapsed_str()}")
+        print("Releasing resources...")
 
         self.stop_event.set()
 
@@ -219,12 +257,14 @@ class StressController:
 
     def run(self):
 
+        self.timer.start()
+
         self.start_cpu()
         self.start_gpu()
 
         for level, hold in LEVELS:
 
-            print(f"\n{'='*32}")
+            print(f"\n\n{'='*32}")
             print(f"  TARGET = {level}%   HOLD = {hold}s")
             print(f"{'='*32}")
 
