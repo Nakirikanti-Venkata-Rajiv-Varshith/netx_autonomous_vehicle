@@ -66,6 +66,7 @@ class LoadBalancerNode:
         self.session = requests.Session()
 
         self.frame_timing = {}
+        self.frame_timing_lock = threading.Lock()
         self.frame_id = 0
         self.last_processing_time = 0.0
         self.profile_skip_counter = 0
@@ -189,6 +190,7 @@ class LoadBalancerNode:
                 "change_score",
                 "edge_score",
                 "cloud_score",
+                "frame_latency_ms",
                 "e2e_latency_sec",
             ]
         )
@@ -300,6 +302,29 @@ class LoadBalancerNode:
     def _get_resource_usage(self):
         with self._resource_lock:
             return dict(self._resource_cache)
+
+    def mark_app_complete(self, frame_uuid, app):
+
+        with self.frame_timing_lock:
+            if frame_uuid not in self.frame_timing:
+                return ""
+
+            info = self.frame_timing[frame_uuid]
+            info["apps_completed"].add(app)
+
+            if info["apps_completed"] == info["apps_expected"]:
+
+                latency = round(
+                    (time.time() - info["t_enter"]) * 1000,
+                    2,
+                )
+
+                info["frame_latency_ms"] = latency
+                info["completed"] = True
+
+                return latency
+
+        return ""
 
     # def wait_for_services(self):
     #     if not rospy.get_param("~only_line_follow", False):
@@ -451,13 +476,21 @@ class LoadBalancerNode:
         if capture_time <= 0:
             capture_time = now
         frame_uuid = f"{self.frame_id}_{int(capture_time * 1e9)}"
-        self.frame_timing[frame_uuid] = {"t_capture": capture_time}
+        with self.frame_timing_lock:
+            self.frame_timing[frame_uuid] = {
+                "t_capture": capture_time,
+                "t_enter": time.time(),
+                "apps_expected": set(self.applications),
+                "apps_completed": set(),
+                "frame_latency_ms": "",
+            }
         self.start_pub.publish(capture_time)
 
-        if len(self.frame_timing) > 500:
-            oldest = sorted(self.frame_timing.keys())[:250]
-            for key in oldest:
-                self.frame_timing.pop(key, None)
+        with self.frame_timing_lock:
+            if len(self.frame_timing) > 500:
+                oldest = sorted(self.frame_timing.keys())[:250]
+                for key in oldest:
+                    self.frame_timing.pop(key, None)
 
         try:
             usage = self._get_resource_usage()
@@ -500,7 +533,17 @@ class LoadBalancerNode:
 
             # Execute onboard work immediately and log per-app
             for app, decision, profile_snapshot in onboard_apps:
-                self.forward_to_onboard(app, ros_image, frame_override=frame)
+                self.forward_to_onboard(
+                    app,
+                    ros_image,
+                    frame_override=frame,
+                )
+
+                frame_latency_ms = self.mark_app_complete(
+                    frame_uuid,
+                    app,
+                )
+
                 self.log_row(
                     frame_uuid,
                     app,
@@ -513,7 +556,16 @@ class LoadBalancerNode:
                     usage["ram_percent"],
                     profile=profile_snapshot,
                     scores=decision,
+                    frame_latency_ms=frame_latency_ms,
+                    frame_id=self.frame_id,
                 )
+
+                with self.frame_timing_lock:
+                    if (
+                        frame_uuid in self.frame_timing
+                        and self.frame_timing[frame_uuid].get("completed")
+                    ):
+                        self.frame_timing.pop(frame_uuid, None)
 
             # Batch cloud requests into a single upload when possible
             if cloud_apps:
@@ -844,20 +896,24 @@ class LoadBalancerNode:
         ram,
         profile=None,
         scores=None,
+        frame_latency_ms="",
+        frame_id=None,
     ):
         try:
             profile = profile or self.scene_profile
             scores = scores or {}
             e2e = ""
-            if frame_uuid in self.frame_timing and location != "onboard":
-                e2e = round(time.time() - self.frame_timing[frame_uuid]["t_capture"], 4)
-                #self.frame_timing.pop(frame_uuid, None)
-            elif frame_uuid in self.frame_timing and location.startswith("onboard"):
-                e2e = round(time.time() - self.frame_timing[frame_uuid]["t_capture"], 4)
+            with self.frame_timing_lock:
+                frame_info = self.frame_timing.get(frame_uuid)
+                if frame_info is not None:
+                    if location != "onboard":
+                        e2e = round(time.time() - frame_info["t_capture"], 4)
+                    elif location.startswith("onboard"):
+                        e2e = round(time.time() - frame_info["t_capture"], 4)
 
             self.csv_writer.writerow(
                 [
-                    self.frame_id,
+                    frame_id if frame_id is not None else self.frame_id,
                     round(rospy.Time.now().to_sec(), 4),
                     app,
                     decision,
@@ -874,6 +930,7 @@ class LoadBalancerNode:
                     profile.get("change_score", ""),
                     scores.get("edge_score", ""),
                     scores.get("cloud_score", ""),
+                    frame_latency_ms,
                     e2e,
                 ]
             )
@@ -911,6 +968,7 @@ class LoadBalancerNode:
             request_meta = {
                 "requested_models": list(requested_models),
                 "frame_uuid": frame_uuid,
+                "frame_id": self.frame_id,
                 "capture_time": capture_time or time.time(),
                 "bandwidth": bandwidth,
                 "cpu": cpu,
@@ -1117,6 +1175,11 @@ class LoadBalancerNode:
                     scores = request_meta.get("scores_per_model", {}).get(m, {})
                     profile_for_m = request_meta.get("profiles_per_model", {}).get(m, request_meta.get("profile", {}))
 
+                    frame_latency_ms = self.mark_app_complete(
+                        request_meta["frame_uuid"],
+                        m,
+                    )
+
                     try:
                         self.log_row(
                             request_meta["frame_uuid"],
@@ -1130,9 +1193,21 @@ class LoadBalancerNode:
                             request_meta["ram"],
                             profile=profile_for_m,
                             scores=scores,
+                            frame_latency_ms=frame_latency_ms,
+                            frame_id=request_meta["frame_id"],
                         )
                     except Exception:
                         pass
+
+                    with self.frame_timing_lock:
+                        if (
+                            request_meta["frame_uuid"] in self.frame_timing
+                            and self.frame_timing[request_meta["frame_uuid"]].get("completed")
+                        ):
+                            self.frame_timing.pop(
+                                request_meta["frame_uuid"],
+                                None,
+                            )
             finally:
                 with self.cloud_lock:
                     if self.latest_cloud_request is None:
