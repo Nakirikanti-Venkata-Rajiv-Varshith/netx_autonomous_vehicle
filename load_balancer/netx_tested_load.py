@@ -136,7 +136,7 @@ class LoadBalancerNode:
 
         self.scene_gray = None
         self.scene_embedding = None
-        self.scene_profile = {"motion_score": 0.0, "scene_complexity": 0.0, "change_score": 0.0}
+        self.scene_profile = {"scene_complexity": 0.0}
 
         self.lane_data = {}
         self.detection_results = []
@@ -185,9 +185,7 @@ class LoadBalancerNode:
                 "ram_percent",
                 "rtt_ms",
                 "jitter_ms",
-                "motion_score",
                 "scene_complexity",
-                "change_score",
                 "edge_score",
                 "cloud_score",
                 "frame_latency_ms",
@@ -601,75 +599,13 @@ class LoadBalancerNode:
 
     def profile_frame(self, frame):
         gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        embedding = cv2.resize(gray, (16, 16)).astype(np.float32) / 255.0
 
-        motion_score = 0.0
-        # Only compute expensive optical flow every N frames to save 30-50% CPU
-        if self.scene_gray is not None and self.profile_skip_counter == 0:
-            # Optimize: Reduce resolution (80x45 vs 160x90) and parameters
-            flow_gray = cv2.resize(gray, (80, 45))
-            flow = cv2.calcOpticalFlowFarneback(
-                self.scene_gray,
-                flow_gray,
-                None,
-                0.5,
-                2,  # Reduced from 3 levels
-                10,  # Reduced from 15 window size
-                2,  # Reduced from 3 iterations
-                5,
-                1.2,
-                0,
-            )
-            magnitude, _ = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-            motion_score = float(np.mean(magnitude))
-        elif self.scene_embedding is not None:
-            # Use embedding delta as lightweight motion proxy on non-profile frames
-            motion_score = float(np.mean(np.abs(embedding - self.scene_embedding))) * 2.0
-
-        # edge_density = float(np.count_nonzero(cv2.Canny(gray, 60, 160))) / float(gray.size)
-        # texture_density = float(cv2.Laplacian(gray, cv2.CV_32F).var())
-        # scene_complexity = clamp(edge_density * 2.5 + texture_density / 2500.0)
-        # if self.profile_skip_counter == 0:
-        #     edge_density = float(
-        #         np.count_nonzero(cv2.Canny(gray, 60, 160))
-        #     ) / float(gray.size)
-
-        #     texture_density = float(
-        #         cv2.Laplacian(gray, cv2.CV_32F).var()
-        #     )
-
-        #     scene_complexity = clamp(
-        #         edge_density * 2.5 + texture_density / 2500.0
-        #     )
-
-        #     # cache results
-        #     self.cached_edge_density = edge_density
-        #     self.cached_texture_density = texture_density
-        #     self.cached_scene_complexity = scene_complexity
-
-        # else:
-        #     # reuse cached values
-        #     edge_density = self.cached_edge_density
-        #     texture_density = self.cached_texture_density
-        #     scene_complexity = self.cached_scene_complexity
         scene_complexity = 0.0
 
-        change_score = 0.0
-        if self.scene_embedding is not None:
-            change_score = float(np.mean(np.abs(embedding - self.scene_embedding)))
-
-        # Update scene reference only every N frames to reduce bandwidth
-        if self.profile_skip_counter == 0:
-            self.scene_gray = cv2.resize(gray, (80, 45))
-        
-        self.scene_embedding = embedding
-        self.profile_skip_counter = (self.profile_skip_counter + 1) % self.profile_skip_interval
-        
         self.scene_profile = {
-            "motion_score": round(motion_score, 4),
-            # "scene_complexity": round(scene_complexity, 4),
-            "change_score": round(change_score, 4),
+            "scene_complexity": scene_complexity,
         }
+
         return self.scene_profile
 
     def decide_processing_location(
@@ -690,7 +626,7 @@ class LoadBalancerNode:
 
         latency_critical = latency_sensitivity == "high"
         tracker_uncertainty = self.get_tracker_uncertainty(app)
-        fresh_required = tracker_uncertainty > 0.55 or profile["change_score"] > 0.2 or profile["motion_score"] > 1.4
+        fresh_required = tracker_uncertainty > 0.55
 
         if not self.network_ok or not edge_available:
             rospy.logdebug("[DECISION] network unavailable, forcing onboard")
@@ -710,23 +646,16 @@ class LoadBalancerNode:
         bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
         low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
         low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
-        low_motion = clamp(1.0 - min(profile["motion_score"] / 4.0, 1.0))
-        high_motion = clamp(1 - low_motion)
         power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
 
         accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
         high_accuracy_need = clamp(
             (accuracy_bias * 0.55)
-            # + (profile["scene_complexity"] * 0.2)
-            + (profile["change_score"] * 0.1)
             + (tracker_uncertainty * 0.15)
         )
         latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
       
-
-        # edge_score = clamp((low_latency * 0.35) + (low_compute_load * 0.20) + (low_motion * 0.17) + (power_saving * 0.2))
-        # cloud_score = clamp((high_accuracy_need * 0.40) + (bandwidth_quality * 0.40) - (latency_penalty * 0.20) + (profile["scene_complexity"] * 0.25))
 
         resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
 
@@ -738,7 +667,6 @@ class LoadBalancerNode:
         edge_score = clamp(
             (low_latency * 0.35)
             + (low_compute_load * 0.20)
-            + (low_motion * 0.17)
             + (power_saving * 0.2)
         )
 
@@ -925,9 +853,7 @@ class LoadBalancerNode:
                     round(ram, 2) if ram is not None else "",
                     "" if self.rtt_ms is None else round(self.rtt_ms, 2),
                     round(self.jitter_ms, 2),
-                    profile.get("motion_score", ""),
                     profile.get("scene_complexity", 0.0),
-                    profile.get("change_score", ""),
                     scores.get("edge_score", ""),
                     scores.get("cloud_score", ""),
                     frame_latency_ms,
@@ -1431,7 +1357,7 @@ class LoadBalancerNode:
             updated.append(tracked)
 
         count_delta = abs(len(detections) - len(previous_detections))
-        uncertainty = clamp((count_delta * 0.2) + (self.scene_profile["change_score"] * 0.5))
+        uncertainty = clamp(count_delta * 0.2)
         self.edge_state[app] = {
             "data": updated,
             "timestamp": now,
