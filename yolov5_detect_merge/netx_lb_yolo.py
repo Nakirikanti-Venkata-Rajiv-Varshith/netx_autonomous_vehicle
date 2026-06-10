@@ -199,6 +199,52 @@ class Yolov5Node:
                 return True
         return False
 
+    # def image_proc(self):
+    #     rospy.loginfo("image_proc started, waiting for images...")
+    #     rospy.logwarn_throttle(2, f"YOLO start={self.start}")
+    #     while self.running and not rospy.is_shutdown():
+    #         rospy.loginfo_throttle(
+    #             5,
+    #             "image_proc alive | start=%s traffic=%s object=%s",
+    #             self.start,
+    #             self.traffic_image is not None,
+    #             self.object_image is not None,
+    #         )
+    #         if not self.start:
+    #             rospy.sleep(0.02)
+    #             continue
+
+    #         try:
+    #             if self.traffic_image is not None:
+    #                 image = self.traffic_image.copy()
+    #                 self.traffic_image = None
+    #                 rospy.loginfo(
+    #                     "processing traffic frame | seq=%d frame_skip=%d",
+    #                     self.traffic_seq,
+    #                     self.frame_skip,
+    #                 )
+    #                 if self.traffic_seq % self.frame_skip == 0 or not self.maybe_publish_cached("traffic"):
+    #                     self.traffic_funtion(image)
+
+    #             if self.object_image is not None:
+    #                 image = self.object_image.copy()
+    #                 self.object_image = None
+    #                 rospy.loginfo(
+    #                     "processing object frame | seq=%d frame_skip=%d",
+    #                     self.object_seq,
+    #                     self.frame_skip,
+    #                 )
+    #                 if self.object_seq % self.frame_skip == 0 or not self.maybe_publish_cached("object"):
+    #                     self.object_funtion(image)
+    #         except BaseException as exc:
+    #             rospy.logerr(f"YOLO processing error: {exc}")
+
+    #         rospy.sleep(0.01)
+
+    #     self.yolov5.destroy()
+    #     self.yolov5_od.destroy()
+    #     rospy.signal_shutdown("shutdown")
+
     def image_proc(self):
         rospy.loginfo("image_proc started, waiting for images...")
         rospy.logwarn_throttle(2, f"YOLO start={self.start}")
@@ -223,7 +269,10 @@ class Yolov5Node:
                         self.traffic_seq,
                         self.frame_skip,
                     )
-                    if self.traffic_seq % self.frame_skip == 0 or not self.maybe_publish_cached("traffic"):
+                    if self.traffic_seq % 5 == 0:
+                        if not self.maybe_publish_cached("traffic"):
+                            self.traffic_funtion(image)
+                    else:
                         self.traffic_funtion(image)
 
                 if self.object_image is not None:
@@ -234,7 +283,10 @@ class Yolov5Node:
                         self.object_seq,
                         self.frame_skip,
                     )
-                    if self.object_seq % self.frame_skip == 0 or not self.maybe_publish_cached("object"):
+                    if self.object_seq % 5 == 0:
+                        if not self.maybe_publish_cached("object"):
+                            self.object_funtion(image)
+                    else:
                         self.object_funtion(image)
             except BaseException as exc:
                 rospy.logerr(f"YOLO processing error: {exc}")
@@ -244,6 +296,7 @@ class Yolov5Node:
         self.yolov5.destroy()
         self.yolov5_od.destroy()
         rospy.signal_shutdown("shutdown")
+
 
 
 if __name__ == "__main__":
