@@ -6,11 +6,7 @@
     <include file="$(find hiwonder_servo_controllers)/launch/start.launch"/>
     <include file="$(find hiwonder_controller)/launch/hiwonder_controller.launch"/>
 
-    <!-- ================================================================ -->
-    <!-- YOLO NODE                                                         -->
-    <!-- respawn="true"  → roslaunch auto-relaunches if the process dies   -->
-    <!-- respawn_delay   → wait 3s before relaunch to let GPU memory free  -->
-    <!-- ================================================================ -->
+    <!-- YOLO NODE -->
     <arg name="yolo_node_name" default="yolov5_lb_setb" />
 
     <rosparam param="/$(arg yolo_node_name)/classes">
@@ -39,9 +35,7 @@
           pkg="hiwonder_example"
           type="netx_lb_yolo.py"
           name="$(arg yolo_node_name)"
-          output="screen"
-          respawn="true"
-          respawn_delay="3.0">
+          output="screen">
 
         <param name="use_depth_cam" value="true"/>
         <param name="engine" value="traffic_signs_640s_7_0.engine"/>
@@ -55,34 +49,22 @@
                value="/home/hiwonder/ros_ws/src/hiwonder_example/scripts/netx_autonomous_vehicle/self_driving_lb/right-side.png"/>
     </node>
 
-    <!-- ================================================================ -->
-    <!-- SELF DRIVING                                                      -->
-    <!-- respawn="true"  → recovers if node crashes mid-run               -->
-    <!-- respawn_delay   → 2s gap so dependent nodes settle first         -->
-    <!-- ================================================================ -->
+    <!-- SELF DRIVING -->
     <arg name="self_driving_node_name" default="self_driving_lb_setb" />
 
     <node pkg="hiwonder_example"
           type="netx_self_driving.py"
           name="$(arg self_driving_node_name)"
-          output="screen"
-          respawn="true"
-          respawn_delay="2.0">
+          output="screen">
 
         <param name="only_line_follow" value="$(arg only_line_follow)"/>
     </node>
 
-    <!-- ================================================================ -->
-    <!-- BANDWIDTH MONITOR                                                 -->
-    <!-- respawn="true"  → network monitor must stay alive at all times   -->
-    <!-- respawn_delay   → 2s so interface is up before re-polling        -->
-    <!-- ================================================================ -->
+    <!-- BANDWIDTH MONITOR -->
     <node pkg="hiwonder_example"
           type="netx_bandwidth_monitor.py"
           name="netx_bandwidth_monitor_node_setb"
-          output="screen"
-          respawn="true"
-          respawn_delay="2.0">
+          output="screen">
 
         <param name="interface" value="wlan0"/>
         <param name="edge_host" value="192.168.20.16"/>
@@ -90,33 +72,20 @@
         <param name="rtt_window" value="12"/>
     </node>
 
-    <!-- ================================================================ -->
-    <!-- NAVIGATION / LANE DETECTOR                                        -->
-    <!-- respawn="true"  → lane detection must always be running          -->
-    <!-- respawn_delay   → 2s to let camera settle after a crash          -->
-    <!-- ================================================================ -->
+    <!-- NAVIGATION -->
     <node pkg="hiwonder_example"
           type="netx_navigation.py"
           name="lane_detector_setb"
-          output="screen"
-          respawn="true"
-          respawn_delay="2.0">
+          output="screen">
 
         <param name="use_depth_cam" value="true"/>
     </node>
 
-    <!-- ================================================================ -->
-    <!-- LOAD BALANCER                                                     -->
-    <!-- respawn="true"  → central orchestrator must stay alive           -->
-    <!-- respawn_delay   → 5s so YOLO and camera are ready before LB      -->
-    <!--                   tries to call wait_for_services() again         -->
-    <!-- ================================================================ -->
+    <!-- LOAD BALANCER -->
     <node pkg="hiwonder_example"
           type="netx_tested_load.py"
           name="load_balancer_setb"
-          output="screen"
-          respawn="true"
-          respawn_delay="5.0">
+          output="screen">
 
         <param name="applications"
                value="['lane_detection','collision_avoidance','traffic_sign_detection']"
@@ -148,5 +117,4 @@
         <param name="max_requests" value="100"/>
     </node>
 
-</launch>
-
+</launch> 
