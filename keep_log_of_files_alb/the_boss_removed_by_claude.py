@@ -638,55 +638,80 @@ class LoadBalancerNode:
                 "force_fresh": True,
             }
 
-        cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
-        gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
-        ram_norm = clamp((ram_usage or 0.0) / 100.0)
-        rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
-        jitter_penalty = clamp(self.jitter_ms / 80.0)
-        bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
-        low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
-        low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
-        power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
+        # cpu_norm = clamp((cpu_usage or 0.0) / 100.0)
+        # gpu_norm = clamp((gpu_usage or 0.0) / 100.0)
+        # ram_norm = clamp((ram_usage or 0.0) / 100.0)
+        # rtt_penalty = clamp(((self.rtt_ms or 120.0) / 150.0))
+        # jitter_penalty = clamp(self.jitter_ms / 80.0)
+        # bandwidth_quality = clamp((1.0 - rtt_penalty) * 0.55 + (1.0 - jitter_penalty) * 0.45)
+        # low_latency = clamp(1.0 - ((rtt_penalty * 0.7) + (jitter_penalty * 0.3)))
+        # low_compute_load = clamp(1.0 - max(cpu_norm, gpu_norm, ram_norm))
+        # power_saving = clamp(1.0 - ((power_mw or 0.0) / float(max(self.power_budget_mw * 1.25, 1.0))))
 
-        accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
-        high_accuracy_need = clamp(
-            (accuracy_bias * 0.55)
-            + (tracker_uncertainty * 0.15)
-        )
-        latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
+        # accuracy_bias = 1.0 if accuracy_priority == "high" else 0.65 if accuracy_priority == "medium" else 0.35
+        # high_accuracy_need = clamp(
+        #     (accuracy_bias * 0.55)
+        #     + (tracker_uncertainty * 0.15)
+        # )
+        # latency_penalty = clamp((rtt_penalty * 0.75) + (jitter_penalty * 0.25))
 
       
 
-        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+        # resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+
+        # overload_bonus = 0.0
+
+        # if resource_pressure > 0.85:
+        #     overload_bonus = (resource_pressure - 0.80) / 0.15
+
+        # edge_score = clamp(
+        #     (low_latency * 0.35)
+        #     + (low_compute_load * 0.20)
+        #     + (power_saving * 0.2)
+        # )
+
+        # cloud_score = clamp(
+        #     (high_accuracy_need * 0.40)
+        #     + (bandwidth_quality * 0.40)
+        #     - (latency_penalty * 0.20)
+        #     # + (profile["scene_complexity"] * 0.25)
+        # )
+
+        # cloud_score = clamp(
+        #     cloud_score + overload_bonus * 0.20
+        # )
+
+        # if latency_critical:
+        #     edge_score = clamp(edge_score + 0.2)
+        #     # cloud_score = clamp(cloud_score - 0.15)
+
+        # if power_mw and power_mw > self.power_budget_mw:
+        #     cloud_score = clamp(cloud_score + 0.2)
+
+        cpu_norm = 0.0
+        gpu_norm = 0.0
+        ram_norm = 0.0
+        rtt_penalty = 0.0
+        jitter_penalty = 0.0
+        bandwidth_quality = clamp((1.0 - clamp(((self.rtt_ms or 120.0) / 150.0))) * 0.55 + (1.0 - clamp(self.jitter_ms / 80.0)) * 0.45)
+        low_latency = 0.0
+        low_compute_load = 0.0
+        power_saving = 0.0
+
+        accuracy_bias = 0.0
+        high_accuracy_need = 0.0
+        latency_penalty = 0.0
+
+        resource_pressure = max(
+            clamp((cpu_usage or 0.0) / 100.0),
+            clamp((gpu_usage or 0.0) / 100.0),
+            clamp((ram_usage or 0.0) / 100.0),
+        )
 
         overload_bonus = 0.0
 
-        if resource_pressure > 0.85:
-            overload_bonus = (resource_pressure - 0.80) / 0.15
-
-        edge_score = clamp(
-            (low_latency * 0.35)
-            + (low_compute_load * 0.20)
-            + (power_saving * 0.2)
-        )
-
-        cloud_score = clamp(
-            (high_accuracy_need * 0.40)
-            + (bandwidth_quality * 0.40)
-            - (latency_penalty * 0.20)
-            # + (profile["scene_complexity"] * 0.25)
-        )
-
-        cloud_score = clamp(
-            cloud_score + overload_bonus * 0.20
-        )
-
-        if latency_critical:
-            edge_score = clamp(edge_score + 0.2)
-            # cloud_score = clamp(cloud_score - 0.15)
-
-        if power_mw and power_mw > self.power_budget_mw:
-            cloud_score = clamp(cloud_score + 0.2)
+        edge_score = 0.0
+        cloud_score = 0.0        
 
         # publish_cached = (
         #     not fresh_required
@@ -722,50 +747,75 @@ class LoadBalancerNode:
                 #     or download_speed <= self.bandwidth_low_threshold
                 # )
 
+                ##_______________________________________________________________________________________##
+                #                      IF -ELSE   STYLE
+
+        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+
         onboard_ok = (
             cpu_usage < self.resource_threshold
-            and gpu_usage < 100
+            and gpu_usage < 90
+            and resource_pressure < 0.80
         )
-        bandwidth_sufficient = bandwidth_quality >= 0.70
+        bandwidth_sufficient = bandwidth_quality >= 0.60
 
         bandwidth_low = bandwidth_quality <= 0.35
 
+        force_offload = resource_pressure > 0.88 and bandwidth_quality > 0.25
+
       
+        # if latency_sensitivity == "high":
+
+        #     if onboard_ok:
+        #         route = "onboard"
+
+        #     elif bandwidth_low:
+        #         route = "onboard"
+
+        #     elif bandwidth_sufficient:
+        #         route = "offboard"
+
+        #     else:
+        #         route = (
+        #             "onboard"
+        #             if accuracy_priority == "high"
+        #             else "lower_resolution"
+        #         )
+
+        # else:
+
+        #     if accuracy_priority == "high":
+        #         route = (
+        #             "onboard"
+        #             if bandwidth_low
+        #             else "offboard"
+        #         )
+
+        #     else:
+        #         route = (
+        #             "offboard"
+        #             if bandwidth_sufficient
+        #             else "lower_resolution"
+        #         )        
+
         if latency_sensitivity == "high":
-
-            if onboard_ok:
+            if force_offload:
+                route = "offboard"   # ← THIS is the key change
+            elif onboard_ok:
                 route = "onboard"
-
             elif bandwidth_low:
                 route = "onboard"
-
             elif bandwidth_sufficient:
                 route = "offboard"
-
             else:
-                route = (
-                    "onboard"
-                    if accuracy_priority == "high"
-                    else "lower_resolution"
-                )
-
+                route = "onboard" if accuracy_priority == "high" else "lower_resolution"
         else:
-
-            if accuracy_priority == "high":
-                route = (
-                    "onboard"
-                    if bandwidth_low
-                    else "offboard"
-                )
-
+            if force_offload:
+                route = "offboard"
+            elif accuracy_priority == "high":
+                route = "onboard" if bandwidth_low else "offboard"
             else:
-                route = (
-                    "offboard"
-                    if bandwidth_sufficient
-                    else "lower_resolution"
-                )        
-
-
+                route = "offboard" if bandwidth_sufficient else "lower_resolution"
 
         # route = "onboard"
 
