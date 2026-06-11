@@ -111,11 +111,11 @@ class TegraStatsReader:
 
                     cpu_m = re.search(r"CPU \[([^\]]+)\]", line)
                     if cpu_m:
-                        usages = [
-                            int(m.group(1))
-                            for core in cpu_m.group(1).split(",")
-                            if (m := re.search(r"(\d+)%", core))
-                        ]
+                        usages = []
+                        for core in cpu_m.group(1).split(","):
+                            core_m = re.search(r"(\d+)%", core)
+                            if core_m:
+                                usages.append(int(core_m.group(1)))
                         if usages:
                             cache["cpu"] = round(sum(usages) / len(usages), 1)
 
