@@ -17,11 +17,11 @@ except:
 
 
 LEVELS = [
-    (45, 10),
+    #(45, 10),
     (55, 10),
     (65, 10),
     (75, 10),
-    (80, 120),
+    (85, 120),
 ]
 
 
@@ -203,7 +203,7 @@ class StressController:
 
         while psutil.virtual_memory().percent < safe_target:
 
-            block_size_mb = 200
+            block_size_mb = 220
 
             try:
 
