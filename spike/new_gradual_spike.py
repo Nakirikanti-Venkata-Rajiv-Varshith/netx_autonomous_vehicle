@@ -16,13 +16,18 @@ except:
     TORCH_AVAILABLE = False
 
 
-LEVELS = [
-    #(45, 10),
-    (55, 30),
-    (65, 30),
-    (75, 30),
-    (85, 90),
-]
+
+# For ALB
+# LEVELS = [
+#     #(45, 10),
+#     (55, 30),
+#     (65, 30),
+#     (75, 30),
+#     (85, 90),
+# ]
+
+# For Onboard
+LEVELS = [(63,30), (73,30), (83,30), (93,90)]
 
 
 # ============================================================
@@ -166,7 +171,11 @@ class StressController:
 
     def start_cpu(self):
 
-        num_workers = max(1, mp.cpu_count() - 1)
+        # For ALB
+        # num_workers = max(1, mp.cpu_count() - 1)      
+
+        # FOR Onboard
+        num_workers = mp.cpu_count()
 
         for _ in range(num_workers):
 
