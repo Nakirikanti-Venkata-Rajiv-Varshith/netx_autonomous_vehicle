@@ -804,26 +804,26 @@ class LoadBalancerNode:
         #             else "lower_resolution"
         #         )        
 
-        if latency_sensitivity == "high":
-            if force_offload:
-                route = "offboard"   # ← THIS is the key change
-            elif onboard_ok:
-                route = "onboard"
-            elif bandwidth_low:
-                route = "onboard"
-            elif bandwidth_sufficient:
-                route = "offboard"
-            else:
-                route = "onboard" if accuracy_priority == "high" else "lower_resolution"
-        else:
-            if force_offload:
-                route = "offboard"
-            elif accuracy_priority == "high":
-                route = "onboard" if bandwidth_low else "offboard"
-            else:
-                route = "offboard" if bandwidth_sufficient else "lower_resolution"
+        # if latency_sensitivity == "high":
+        #     if force_offload:
+        #         route = "offboard"   # ← THIS is the key change
+        #     elif onboard_ok:
+        #         route = "onboard"
+        #     elif bandwidth_low:
+        #         route = "onboard"
+        #     elif bandwidth_sufficient:
+        #         route = "offboard"
+        #     else:
+        #         route = "onboard" if accuracy_priority == "high" else "lower_resolution"
+        # else:
+        #     if force_offload:
+        #         route = "offboard"
+        #     elif accuracy_priority == "high":
+        #         route = "onboard" if bandwidth_low else "offboard"
+        #     else:
+        #         route = "offboard" if bandwidth_sufficient else "lower_resolution"
 
-        # route = "onboard"
+        route = "offboard"
 
 
         rospy.logdebug(
