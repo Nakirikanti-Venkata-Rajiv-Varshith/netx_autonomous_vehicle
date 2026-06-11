@@ -26,8 +26,8 @@ LEVELS = [
     (85, 90),
 ]
 
-# For Onboard
-# LEVELS = [(63,30), (73,30), (83,30), (93,90)]
+#For onboard
+# Just increase the for loop 10000 -> 14000 balnces
 
 
 # ============================================================
