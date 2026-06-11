@@ -19,12 +19,13 @@ except:
 
 # For ALB
 LEVELS = [
-    #(45, 10),
     (50, 30),
     (60, 30),
     (70, 30),
     (80, 90),
 ]
+
+RELEASE_HOLD = 30  # seconds of cooldown between each stress level
 
 #For onboard
 # Just increase the for loop 10000 -> 14000 balnces
@@ -67,7 +68,7 @@ class GPUStressor:
     def __init__(self):
 
         self.running = False
-        self.level = 45
+        self.level = 0
 
     def set_level(self, level):
         self.level = level
@@ -88,7 +89,12 @@ class GPUStressor:
 
             level = self.level
 
-            if level <= 50:
+            # At level 0 (release phase), do minimal work / sleep
+            if level == 0:
+                time.sleep(0.1)
+                continue
+
+            if level <= 55:
                 size = 512
             elif level <= 65:
                 size = 768
@@ -155,7 +161,7 @@ class StressController:
 
         self.stop_event = mp.Event()
 
-        self.cpu_target = mp.Value('d', 45.0)
+        self.cpu_target = mp.Value('d', 0.0)
 
         self.cpu_processes = []
 
@@ -172,7 +178,7 @@ class StressController:
     def start_cpu(self):
 
         # For ALB
-        # num_workers = max(1, mp.cpu_count() - 1)      
+        # num_workers = max(1, mp.cpu_count() - 1)
 
         # FOR Onboard
         num_workers = mp.cpu_count()
@@ -229,6 +235,35 @@ class StressController:
 
     # --------------------------------------------------------
 
+    def release_ram(self):
+        """Free all allocated RAM blocks."""
+        self.ram_blocks.clear()
+        gc.collect()
+
+    # --------------------------------------------------------
+
+    def run_release_phase(self):
+        """Drop CPU/GPU to 0% and hold for RELEASE_HOLD seconds so the system cools down."""
+
+        print(f"\n\n{'='*32}")
+        print(f"  RELEASE PHASE   HOLD = {RELEASE_HOLD}s")
+        print(f"{'='*32}")
+
+        # Drop CPU and GPU load to zero
+        self.cpu_target.value = 0.0
+        self.gpu.set_level(0)
+
+        # Free RAM so we can observe natural cooldown
+        self.release_ram()
+
+        # Let readings settle, then monitor
+        time.sleep(2)
+        self.monitor()
+
+        time.sleep(RELEASE_HOLD - 2)
+
+    # --------------------------------------------------------
+
     def monitor(self):
 
         cpu = psutil.cpu_percent(interval=1)
@@ -271,7 +306,7 @@ class StressController:
         self.start_cpu()
         self.start_gpu()
 
-        for level, hold in LEVELS:
+        for i, (level, hold) in enumerate(LEVELS):
 
             print(f"\n\n{'='*32}")
             print(f"  TARGET = {level}%   HOLD = {hold}s")
@@ -287,6 +322,11 @@ class StressController:
 
             # Hold for remaining duration
             time.sleep(hold - 2)
+
+            # ── Release phase after every stress level ──────────
+            # (skip only after the very last level to go straight to cleanup)
+            if i < len(LEVELS) - 1:
+                self.run_release_phase()
 
         self.cleanup()
 
