@@ -178,10 +178,10 @@ class StressController:
     def start_cpu(self):
 
         # For ALB
-        # num_workers = max(1, mp.cpu_count() - 1)
+        num_workers = max(1, mp.cpu_count() - 1)
 
         # FOR Onboard
-        num_workers = mp.cpu_count()
+        # num_workers = mp.cpu_count()
 
         for _ in range(num_workers):
 
