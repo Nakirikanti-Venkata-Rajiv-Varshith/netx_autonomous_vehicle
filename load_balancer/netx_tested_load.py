@@ -704,11 +704,11 @@ class LoadBalancerNode:
         high_accuracy_need = 0.0
         latency_penalty = 0.0
 
-        resource_pressure = max(
-            clamp((cpu_usage or 0.0) / 100.0),
-            clamp((gpu_usage or 0.0) / 100.0),
-            clamp((ram_usage or 0.0) / 100.0),
-        )
+        # resource_pressure = max(
+        #     clamp((cpu_usage or 0.0) / 100.0),
+        #     clamp((gpu_usage or 0.0) / 100.0),
+        #     clamp((ram_usage or 0.0) / 100.0),
+        # )
 
         overload_bonus = 0.0
 
@@ -752,7 +752,11 @@ class LoadBalancerNode:
                 ##_______________________________________________________________________________________##
                 #                      IF -ELSE   STYLE
 
-        resource_pressure = max(cpu_norm, gpu_norm, ram_norm)
+        resource_pressure = max(
+            clamp((cpu_usage or 0.0) / 100.0),
+            clamp((gpu_usage or 0.0) / 100.0),
+            clamp((ram_usage or 0.0) / 100.0),
+        )
 
         onboard_ok = (
             cpu_usage < self.resource_threshold
@@ -800,26 +804,26 @@ class LoadBalancerNode:
         #             else "lower_resolution"
         #         )        
 
-        # if latency_sensitivity == "high":
-        #     if force_offload:
-        #         route = "offboard"   # ← THIS is the key change
-        #     elif onboard_ok:
-        #         route = "onboard"
-        #     elif bandwidth_low:
-        #         route = "onboard"
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard" if accuracy_priority == "high" else "lower_resolution"
-        # else:
-        #     if force_offload:
-        #         route = "offboard"
-        #     elif accuracy_priority == "high":
-        #         route = "onboard" if bandwidth_low else "offboard"
-        #     else:
-        #         route = "offboard" if bandwidth_sufficient else "lower_resolution"
+        if latency_sensitivity == "high":
+            if force_offload:
+                route = "offboard"   # ← THIS is the key change
+            elif onboard_ok:
+                route = "onboard"
+            elif bandwidth_low:
+                route = "onboard"
+            elif bandwidth_sufficient:
+                route = "offboard"
+            else:
+                route = "onboard" if accuracy_priority == "high" else "lower_resolution"
+        else:
+            if force_offload:
+                route = "offboard"
+            elif accuracy_priority == "high":
+                route = "onboard" if bandwidth_low else "offboard"
+            else:
+                route = "offboard" if bandwidth_sufficient else "lower_resolution"
 
-        route = "onboard"
+        # route = "onboard"
 
 
         rospy.logdebug(
