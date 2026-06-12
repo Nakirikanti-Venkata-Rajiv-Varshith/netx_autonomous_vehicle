@@ -823,53 +823,52 @@ class LoadBalancerNode:
         #     else:
         #         route = "offboard" if bandwidth_sufficient else "lower_resolution"
 
-        # Initialize once (outside the loop/function if possible)
-        if not hasattr(self, "_route_toggle_start"):
-            self._route_toggle_start = time.time()
-            self._last_phase = None
+        # # Initialize once (outside the loop/function if possible)
+        # if not hasattr(self, "_route_toggle_start"):
+        #     self._route_toggle_start = time.time()
+        #     self._last_phase = None
 
-        elapsed = time.time() - self._route_toggle_start
+        # elapsed = time.time() - self._route_toggle_start
 
-        # 60-second cycle:
-        # 0-30s   -> original logic
-        # 30-60s  -> force onboard
-        cycle_pos = elapsed % 60
+        # # 60-second cycle:
+        # # 0-30s   -> original logic
+        # # 30-60s  -> force onboard
+        # cycle_pos = elapsed % 60
 
-        if cycle_pos < 30:
-            # Log only once when entering ALB phase
-            if self._last_phase != "ALB":
-                rospy.logwarn("ALB")
-                self._last_phase = "ALB"
+        # if cycle_pos < 30:
+        #     # Log only once when entering ALB phase
+        #     if self._last_phase != "ALB":
+        #         rospy.logwarn("ALB")
+        #         self._last_phase = "ALB"
 
-            # ===== Original Logic =====
-            if latency_sensitivity == "high":
-                if force_offload:
-                    route = "offboard"
-                elif onboard_ok:
-                    route = "onboard"
-                elif bandwidth_low:
-                    route = "onboard"
-                elif bandwidth_sufficient:
-                    route = "offboard"
-                else:
-                    route = "onboard" if accuracy_priority == "high" else "lower_resolution"
-            else:
-                if force_offload:
-                    route = "offboard"
-                elif accuracy_priority == "high":
-                    route = "onboard" if bandwidth_low else "offboard"
-                else:
-                    route = "offboard" if bandwidth_sufficient else "lower_resolution"
+        #     # ===== Original Logic =====
+        #     if latency_sensitivity == "high":
+        #         if force_offload:
+        #             route = "offboard"
+        #         elif onboard_ok:
+        #             route = "onboard"
+        #         elif bandwidth_low:
+        #             route = "onboard"
+        #         elif bandwidth_sufficient:
+        #             route = "offboard"
+        #         else:
+        #             route = "onboard" if accuracy_priority == "high" else "lower_resolution"
+        #     else:
+        #         if force_offload:
+        #             route = "offboard"
+        #         elif accuracy_priority == "high":
+        #             route = "onboard" if bandwidth_low else "offboard"
+        #         else:
+        #             route = "offboard" if bandwidth_sufficient else "lower_resolution"
 
-        else:
-            # Log only once when entering forced-onboard phase
-            if self._last_phase != "FORCED_ONBOARD":
-                rospy.logwarn("FORCED_ONBOARD")
-                self._last_phase = "FORCED_ONBOARD"
+        # else:
+        #     # Log only once when entering forced-onboard phase
+        #     if self._last_phase != "FORCED_ONBOARD":
+        #         rospy.logwarn("FORCED_ONBOARD")
+        #         self._last_phase = "FORCED_ONBOARD"
 
-            route = "onboard"
+        route = "offboard"
 
-        # route = "offboard"
 
 
         rospy.logdebug(
