@@ -835,7 +835,7 @@ class LoadBalancerNode:
             if self._last_phase != "FORCED_ONBOARD":
                 rospy.logwarn("FORCED_ONBOARD: Running pure onboard for first 60s")
                 self._last_phase = "FORCED_ONBOARD"
-            route = "onboard"
+            route = "offboard"
 
         else:
             # After 60 seconds, use normal routing logic
