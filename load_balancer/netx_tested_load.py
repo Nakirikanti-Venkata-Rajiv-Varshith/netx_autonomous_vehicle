@@ -770,98 +770,26 @@ class LoadBalancerNode:
         force_offload = resource_pressure > 0.88 and bandwidth_quality > 0.25
 
       
-        # if latency_sensitivity == "high":
-
-        #     if onboard_ok:
-        #         route = "onboard"
-
-        #     elif bandwidth_low:
-        #         route = "onboard"
-
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
-
-        #     else:
-        #         route = (
-        #             "onboard"
-        #             if accuracy_priority == "high"
-        #             else "lower_resolution"
-        #         )
-
-        # else:
-
-        #     if accuracy_priority == "high":
-        #         route = (
-        #             "onboard"
-        #             if bandwidth_low
-        #             else "offboard"
-        #         )
-
-        #     else:
-        #         route = (
-        #             "offboard"
-        #             if bandwidth_sufficient
-        #             else "lower_resolution"
-        #         )        
-
-        # if latency_sensitivity == "high":
-        #     if force_offload:
-        #         route = "offboard"   # ← THIS is the key change
-        #     elif onboard_ok:
-        #         route = "onboard"
-        #     elif bandwidth_low:
-        #         route = "onboard"
-        #     elif bandwidth_sufficient:
-        #         route = "offboard"
-        #     else:
-        #         route = "onboard" if accuracy_priority == "high" else "lower_resolution"
-        # else:
-        #     if force_offload:
-        #         route = "offboard"
-        #     elif accuracy_priority == "high":
-        #         route = "onboard" if bandwidth_low else "offboard"
-        #     else:
-        #         route = "offboard" if bandwidth_sufficient else "lower_resolution"
-
-        # Initialize once (outside the loop/function if possible)
-        if not hasattr(self, "_route_toggle_start"):
-            self._route_toggle_start = time.time()
-            self._last_phase = None
-
-        elapsed = time.time() - self._route_toggle_start
-
-        if elapsed < 60:
-            # Force onboard for the first 60 seconds
-            if self._last_phase != "FORCED_ONBOARD":
-                rospy.logwarn("FORCED_ONBOARD: Running pure onboard for first 60s")
-                self._last_phase = "FORCED_ONBOARD"
-            route = "offboard"
-
-        else:
-            # After 60 seconds, use normal routing logic
-            if self._last_phase != "ALB":
-                rospy.logwarn("ALB: Switching to normal routing logic")
-                self._last_phase = "ALB"
-
-            # ===== Normal Logic =====
-            if latency_sensitivity == "high":
-                if force_offload:
-                    route = "offboard"
-                elif onboard_ok:
-                    route = "onboard"
-                elif bandwidth_low:
-                    route = "onboard"
-                elif bandwidth_sufficient:
-                    route = "offboard"
-                else:
-                    route = "onboard" if accuracy_priority == "high" else "lower_resolution"
+        if latency_sensitivity == "high":
+            if force_offload:
+                route = "offboard"   # ← THIS is the key change
+            elif onboard_ok:
+                route = "onboard"
+            elif bandwidth_low:
+                route = "onboard"
+            elif bandwidth_sufficient:
+                route = "offboard"
             else:
-                if force_offload:
-                    route = "offboard"
-                elif accuracy_priority == "high":
-                    route = "onboard" if bandwidth_low else "offboard"
-                else:
-                    route = "offboard" if bandwidth_sufficient else "lower_resolution"
+                route = "onboard" if accuracy_priority == "high" else "lower_resolution"
+        else:
+            if force_offload:
+                route = "offboard"
+            elif accuracy_priority == "high":
+                route = "onboard" if bandwidth_low else "offboard"
+            else:
+                route = "offboard" if bandwidth_sufficient else "lower_resolution"
+
+        
 
         # route = "offboard"
 
