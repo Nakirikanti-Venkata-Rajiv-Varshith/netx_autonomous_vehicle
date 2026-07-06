@@ -978,12 +978,12 @@ class LoadBalancerNode:
         rtt_penalty = (self.rtt_ms or 120.0) / 150.0
         
         if min_bandwidth >= self.bandwidth_high_threshold:
-            jpeg_quality = 80
+            jpeg_quality = 100#80
         elif min_bandwidth >= self.bandwidth_low_threshold:
-            jpeg_quality = 70
+            jpeg_quality = 100#70
         else:
             # High latency or low bandwidth: use lower quality
-            jpeg_quality = 60 if rtt_penalty > 0.7 else 65
+            jpeg_quality = 100 #60 if rtt_penalty > 0.7 else 65
         
         ok, buffer = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if not ok:
